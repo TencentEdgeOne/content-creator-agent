@@ -1,0 +1,79 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: #ffffff;
+    --foreground: #111827;
+  }
+
+  .dark {
+    --background: #0f172a;
+    --foreground: #f1f5f9;
+  }
+
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+  }
+}
+
+@layer components {
+  .prose-editor h1 {
+    @apply text-3xl font-bold text-gray-900 dark:text-gray-100 mb-4 mt-6;
+  }
+  .prose-editor h2 {
+    @apply text-2xl font-semibold text-gray-800 dark:text-gray-200 mb-3 mt-5;
+  }
+  .prose-editor h3 {
+    @apply text-xl font-semibold text-gray-800 dark:text-gray-200 mb-2 mt-4;
+  }
+  .prose-editor p {
+    @apply text-gray-700 dark:text-gray-300 leading-relaxed mb-4;
+  }
+  .prose-editor ul, .prose-editor ol {
+    @apply pl-6 mb-4 text-gray-700 dark:text-gray-300;
+  }
+  .prose-editor ul {
+    @apply list-disc;
+  }
+  .prose-editor ol {
+    @apply list-decimal;
+  }
+  .prose-editor li {
+    @apply mb-1;
+  }
+  .prose-editor blockquote {
+    @apply border-l-4 border-brand-300 pl-4 py-2 my-4 text-gray-600 dark:text-gray-400 italic bg-gray-50 dark:bg-gray-800/50 rounded-r-lg;
+  }
+  .prose-editor code {
+    @apply bg-gray-100 dark:bg-gray-800 text-brand-600 dark:text-brand-400 px-1.5 py-0.5 rounded text-sm font-mono;
+  }
+  .prose-editor pre {
+    @apply bg-gray-900 dark:bg-gray-950 text-gray-100 p-4 rounded-lg overflow-x-auto mb-4;
+  }
+  .prose-editor pre code {
+    @apply bg-transparent text-gray-100 p-0;
+  }
+  .prose-editor a {
+    @apply text-brand-600 dark:text-brand-400 underline hover:text-brand-700 dark:hover:text-brand-300;
+  }
+  .prose-editor strong {
+    @apply font-semibold text-gray-900 dark:text-gray-100;
+  }
+  .prose-editor hr {
+    @apply my-6 border-gray-200 dark:border-gray-700;
+  }
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.animate-shimmer {
+  background: linear-gradient(90deg, transparent 0%, rgba(99,102,241,0.08) 50%, transparent 100%);
+  background-size: 200% 100%;
+  animation: shimmer 2s ease-in-out infinite;
+}
