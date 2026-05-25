@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { TopicForm } from "./components/topic-form";
 import { ArticleEditor } from "./components/article-editor";
 import { ArticleStats } from "./components/article-stats";
@@ -60,6 +60,9 @@ export default function Home() {
   const [shouldAutoSave, setShouldAutoSave] = useState(false);
   const [isRefining, setIsRefining] = useState(false);
 
+  // Stable conversation ID for this session (used by stop/abort)
+  const conversationId = useMemo(() => crypto.randomUUID(), []);
+
   // Version management state
   const [currentArticleId, setCurrentArticleId] = useState<string | null>(null);
   const [versions, setVersions] = useState<ArticleVersion[]>([]);
@@ -74,6 +77,7 @@ export default function Home() {
 
   // Preferences state (long-term memory)
   const [preferences, setPreferences] = useState<any>(null);
+  const [storageWarning, setStorageWarning] = useState<string | null>(null);
 
   // Ref for triggering scroll
   const editorScrollRef = useRef<{ scrollToTop: () => void; scrollToSection: (index: number) => void } | null>(null);
@@ -89,6 +93,9 @@ export default function Home() {
       .then(data => {
         if (data?.preferences) {
           setPreferences(data.preferences);
+        }
+        if (data?.error === 'BLOB_NOT_CONFIGURED') {
+          setStorageWarning('本地开发需要配置 Blob 存储环境变量才能使用文章历史和偏好记忆功能。请在 .env 文件中设置 BLOB_PROJECT_ID 和 BLOB_TOKEN。');
         }
       })
       .catch(() => {});
@@ -137,7 +144,18 @@ export default function Home() {
 
         if (res.ok) {
           const data = await res.json();
-          setOutline(data.outline);
+          let parsedOutline = data.outline;
+          // If outline has raw field (backend parse failed), try to extract from raw
+          if (parsedOutline?.raw && parsedOutline.sections?.length <= 1) {
+            try {
+              const rawMatch = parsedOutline.raw.match(/\{[\s\S]*\}/);
+              if (rawMatch) {
+                const fromRaw = JSON.parse(rawMatch[0]);
+                if (fromRaw.sections?.length > 1) parsedOutline = fromRaw;
+              }
+            } catch {}
+          }
+          setOutline(parsedOutline);
           if (data.usage) {
             const outlineTokens = (data.usage.input_tokens || 0) + (data.usage.output_tokens || 0);
             setTokenUsage({ input: data.usage.input_tokens || 0, output: data.usage.output_tokens || 0 });
@@ -207,7 +225,7 @@ export default function Home() {
       try {
         const response = await fetch(endpoint, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", "pages-agent-conversation-id": conversationId },
           body: JSON.stringify({
             topic: params.topic,
             keywords: params.keywords,
@@ -347,7 +365,16 @@ export default function Home() {
   const handleStop = useCallback(() => {
     abortController?.abort();
     setIsGenerating(false);
-  }, [abortController]);
+    // Notify backend to cancel the active run
+    fetch("/stop", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "pages-agent-conversation-id": conversationId,
+      },
+      body: JSON.stringify({ conversation_id: conversationId }),
+    }).catch(() => {});
+  }, [abortController, conversationId]);
 
   const handleRefineStart = useCallback(() => {
     setIsRefining(true);
@@ -443,6 +470,21 @@ export default function Home() {
       </header>
 
       {/* Main layout */}
+      {storageWarning && (
+        <div className="mx-auto max-w-[1600px] px-4 pt-4">
+          <div className="flex items-start gap-2 px-4 py-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
+            <span className="text-amber-500 mt-0.5">⚠️</span>
+            <div className="flex-1">
+              <p className="text-xs text-amber-700 dark:text-amber-400">{storageWarning}</p>
+              <p className="text-[11px] text-amber-600/80 dark:text-amber-500/80 mt-0.5">
+                获取方式：<a href="https://cloud.tencent.com/document/product/1552/131425" target="_blank" rel="noopener noreferrer" className="underline hover:text-amber-800 dark:hover:text-amber-300">查看文档</a>
+                {" "}| 部署到 EdgeOne Pages 后自动注入，无需手动配置。
+              </p>
+            </div>
+            <button onClick={() => setStorageWarning(null)} className="text-amber-400 hover:text-amber-600 text-sm leading-none">×</button>
+          </div>
+        </div>
+      )}
       <div className="mx-auto max-w-[1600px] px-4 py-6">
         <div className="flex flex-col lg:flex-row gap-6">
           {/* Left sidebar */}

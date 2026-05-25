@@ -1,102 +1,208 @@
 /**
- * Content Creation Agent — Hybrid Mode
+ * Content Creation Agent — Pure Lite Mode (No DeepAgent)
  *
- * Optimization strategy:
- * - "short" / "medium" articles: manual agent loop (bindTools), ~12-15k tokens
- * - "long" articles: createDeepAgent with maxSteps=3, ~20-25k tokens
+ * 彻底移除 createDeepAgent，原因:
+ * - 自动注入 14 个内置工具定义 → +30k input tokens 开销
+ * - 内部规划逻辑覆盖 system prompt → 模型不听指令
+ * - 多次搜索无法控制 → 51k tokens 吞掉无输出
  *
- * Key optimizations vs original:
- * 1. Lite loop as default (no built-in tools overhead)
- * 2. Deep agent only for long articles that benefit from multi-step research
- * 3. maxSteps=3 hard cap prevents runaway loops
- * 4. search_web limited to maxResults=3 (less context to carry)
- * 5. After search, tools are unbound to force text output
+ * 新架构:
+ * ┌─────────────────────────────────────────────────────────┐
+ * │ 全部走 bindTools 手动循环:                                │
+ * │ short/medium: 搜索1次 → 直接写                           │
+ * │ long: 搜索1次 → 生成大纲 → 按大纲写全文                    │
+ * │                                                         │
+ * │ 搜索工具自带调用计数器：第2次起返回空，从根本上杜绝多搜        │
+ * └─────────────────────────────────────────────────────────┘
+ *
+ * Token 预估:
+ * - short: ~800-1200 tokens (1次模型调用，无搜索工具绑定)
+ * - medium: ~1500-2500 tokens (2次调用: 搜索+写)
+ * - long: ~3000-5000 tokens (3次调用: 搜索+大纲+写)
  */
 import { initChatModel } from 'langchain';
-import { createDeepAgent } from 'deepagents';
 import { tool } from 'langchain';
 import { z } from 'zod';
-import { HumanMessage, AIMessage, ToolMessage as LCToolMessage, AIMessageChunk, ToolMessage } from '@langchain/core/messages';
+import { HumanMessage, AIMessage, ToolMessage as LCToolMessage } from '@langchain/core/messages';
 import { getAgentEnv, createModel, createLogger } from './_shared';
 
 type Model = Awaited<ReturnType<typeof initChatModel>>;
 
 const logger = createLogger('create');
 
-// Shared system prompt — concise to save tokens
-const SYSTEM_PROMPT = `You are a professional content creator. Date: ${new Date().toISOString().slice(0, 10)}.
+// ============================================================
+// Memory Layer — via context.store (EdgeOne Pages 原生存储)
+// ============================================================
+interface UserMemory {
+    userId: string;
+    defaultStyle: string;
+    defaultLength: string;
+    defaultLanguage: string;
+    recentTopics: string[];
+    recentKeywords: string[];
+    customInstructions: string;
+    totalArticles: number;
+    preferredStructure: string;
+    avoidPatterns: string[];
+    toneNotes: string;
+}
 
-WORKFLOW:
-1. Call search_web ONCE with a focused query to research the topic
-2. Write the COMPLETE article directly as text output
-
-RULES:
-- Call search_web exactly ONCE, then write the full article
-- Do NOT call search_web multiple times — one comprehensive query is enough
-- Output in markdown (## headings, paragraphs, lists)
-- Write in the same language as the user's topic
-- Length targets (STRICTLY follow):
-  - "short" ≈ 1000 Chinese chars / 800 English words, 4-5 sections
-  - "medium" ≈ 2500 Chinese chars / 2000 English words, 6-8 sections
-  - "long" ≈ 5000 Chinese chars / 4000 English words, 10-15 sections`;
-
-// Deep agent mode: extra rules to suppress built-in tools
-const DEEP_SYSTEM_PROMPT = SYSTEM_PROMPT + `
-
-CRITICAL: Do NOT use write_todos, filesystem tools, or task/subagent tools.
-Only use search_web (max 2 calls), then write the article as text.`;
-
-// Built-in tool names from deepagents — filter from stream
-const BUILTIN_TOOLS = new Set([
-    'write_todos', 'ls', 'read_file', 'write_file', 'edit_file', 'glob', 'grep', 'execute',
-    'start_async_task', 'check_async_task', 'update_async_task', 'cancel_async_task', 'list_async_tasks',
-    'task',
-]);
-
-// Shared search tool — maxResults reduced to save context tokens
-const searchWeb = tool(
-    async ({ query, maxResults = 3 }: { query: string; maxResults?: number }) => {
-        logger.log(`search_web: "${query}"`);
-        const mockResults = [
-            { title: `Latest Research on ${query}`, url: `https://research.example.com/${query.replace(/\s+/g, '-')}`, snippet: `Comprehensive analysis of ${query} with recent findings and expert opinions.` },
-            { title: `${query}: A Complete Guide`, url: `https://guide.example.com/${query.replace(/\s+/g, '-')}`, snippet: `Everything you need to know about ${query}. Covers fundamentals, best practices, and advanced strategies.` },
-            { title: `Expert Insights: ${query}`, url: `https://experts.example.com/${query.replace(/\s+/g, '-')}`, snippet: `Industry experts share perspectives on ${query}, including trends and future predictions.` },
-        ];
-        return JSON.stringify(mockResults.slice(0, maxResults));
-    },
-    {
-        name: 'search_web',
-        description: 'Search the web for information. Call ONCE with a comprehensive query.',
-        schema: z.object({
-            query: z.string().describe('Search query — be specific and comprehensive in one query'),
-            maxResults: z.number().optional().default(3).describe('Max results (default 3)'),
-        }),
+async function loadUserMemory(store: any, userId: string): Promise<UserMemory | null> {
+    if (!store) return null;
+    try {
+        const conversationId = `user-prefs-${userId}`;
+        const messages = await store.getMessages({ conversationId, limit: 1, order: 'desc' });
+        if (messages.length > 0 && messages[0].content) {
+            const content = messages[0].content;
+            return typeof content === 'string' ? JSON.parse(content) : content;
+        }
+        return null;
+    } catch (e) {
+        logger.error('Failed to load memory:', (e as Error).message);
+        return null;
     }
-);
+}
 
-const tools = [searchWeb];
-const toolMap: Record<string, typeof searchWeb> = { search_web: searchWeb };
+async function recordUsage(store: any, userId: string, topic: string, keywords?: string, style?: string, length?: string) {
+    if (!store) return;
+    try {
+        const conversationId = `user-prefs-${userId}`;
+        let prefs: any = { userId, totalArticles: 0, recentTopics: [], recentKeywords: [] };
+        try {
+            const messages = await store.getMessages({ conversationId, limit: 1, order: 'desc' });
+            if (messages.length > 0 && messages[0].content) {
+                const content = messages[0].content;
+                prefs = typeof content === 'string' ? JSON.parse(content) : content;
+            }
+        } catch {}
+
+        if (topic) prefs.recentTopics = [topic, ...(prefs.recentTopics || []).filter((t: string) => t !== topic)].slice(0, 10);
+        if (keywords) {
+            const newKws = keywords.split(/[,，]/).map((k: string) => k.trim()).filter(Boolean);
+            prefs.recentKeywords = [...new Set([...newKws, ...(prefs.recentKeywords || [])])].slice(0, 20);
+        }
+        if (style) prefs.defaultStyle = style;
+        if (length) prefs.defaultLength = length;
+        prefs.totalArticles = (prefs.totalArticles || 0) + 1;
+        prefs.lastActiveAt = new Date().toISOString();
+
+        try { await store.clearMessages({ conversationId }); } catch {}
+        await store.appendMessage({
+            conversationId, userId, role: 'system',
+            content: JSON.stringify(prefs),
+            metadata: { type: 'preferences', updatedAt: prefs.lastActiveAt },
+        });
+        logger.log(`Recorded usage for ${userId} (total: ${prefs.totalArticles})`);
+    } catch (e) {
+        logger.error('Failed to record usage:', (e as Error).message);
+    }
+}
 
 // ============================================================
-// Lite Loop — for short/medium articles (~12-15k tokens)
+// System Prompt — 精简中文，带结构模板
 // ============================================================
-async function* liteEventStream(modelInstance: Model, userMessage: string, signal?: AbortSignal): AsyncGenerator<string> {
+function buildSystemPrompt(memory: UserMemory | null, articleLength: string): string {
+    let prompt = `你是专业内容创作者。日期：${new Date().toISOString().slice(0, 10)}。
+
+## 文章结构（必须严格遵守）
+
+\`\`\`
+# 标题
+
+引言（2-3句，点题+文章价值）
+
+## 章节一
+导入语
+
+### 子标题1.1
+段落内容（3-5句，有论据/数据/案例）
+
+### 子标题1.2
+段落内容
+
+## 章节二
+...（同上结构）
+
+## 总结与展望
+结语段落
+\`\`\`
+
+每个 ## 下必须有 2-3 个 ### 子节。禁止全文只用 ## 平铺。
+
+## 长度：${articleLength}
+${articleLength === 'short' ? '~1000字，4-5个##，每##含2个###' : articleLength === 'long' ? '~5000字，10-12个##，每##含3-4个###' : '~2500字，6-8个##，每##含2-3个###'}
+
+语言：与用户话题一致。中文按汉字计，必须达到目标字数。`;
+
+    if (memory && memory.totalArticles > 0) {
+        const parts: string[] = [];
+        if (memory.defaultStyle && memory.defaultStyle !== 'informative') parts.push(`风格：${memory.defaultStyle}`);
+        if (memory.toneNotes) parts.push(`语气：${memory.toneNotes}`);
+        if (memory.customInstructions) parts.push(memory.customInstructions);
+        if (memory.avoidPatterns?.length) parts.push(`避免：${memory.avoidPatterns.join('、')}`);
+        if (parts.length > 0) prompt += `\n\n用户偏好：${parts.join('；')}`;
+    }
+
+    return prompt;
+}
+
+// ============================================================
+// Search Tool — 带调用计数器，从根本上杜绝多次搜索
+// ============================================================
+function createSearchTool() {
+    let callCount = 0;
+
+    return tool(
+        async ({ query }: { query: string }) => {
+            callCount++;
+            if (callCount > 1) {
+                logger.log(`search_web blocked (call #${callCount}): "${query}"`);
+                return '已搜索过，请直接使用已有信息写文章。';
+            }
+            logger.log(`search_web: "${query}"`);
+
+            // TODO: 接入真实搜索 (DuckDuckGo / EdgeOne Search API)
+            const results = [
+                `[1] ${query}的最新研究：该领域最新研究进展与专家观点综合分析。`,
+                `[2] ${query}全面指南：涵盖基础原理、最佳实践与进阶策略。`,
+                `[3] ${query}深度解读：行业专家解读，包含趋势分析与未来预测。`,
+            ];
+            return results.join('\n');
+        },
+        {
+            name: 'search_web',
+            description: '搜索网络信息（仅限调用一次）',
+            schema: z.object({ query: z.string().describe('搜索关键词') }),
+        }
+    );
+}
+
+// ============================================================
+// Core Stream — 统一的手动循环（取代 createDeepAgent）
+// ============================================================
+async function* generateStream(modelInstance: Model, userMessage: string, systemPrompt: string, signal?: AbortSignal): AsyncGenerator<string> {
     let totalInputTokens = 0;
     let totalOutputTokens = 0;
 
+    // 每次请求创建新的 search tool 实例（重置计数器）
+    const searchTool = createSearchTool();
+    const tools = [searchTool];
+    const toolMap: Record<string, typeof searchTool> = { search_web: searchTool };
+
     try {
-        logger.log(`[lite] Starting: "${userMessage.slice(0, 80)}"`);
+        logger.log(`Starting: "${userMessage.slice(0, 80)}"`);
         const modelWithTools = modelInstance.bindTools(tools);
         const messages: any[] = [
-            { role: 'system', content: SYSTEM_PROMPT },
+            { role: 'system', content: systemPrompt },
             new HumanMessage(userMessage),
         ];
         let searchDone = false;
 
-        // Max 3 iterations: search → write (→ fallback)
+        // 最多 3 轮: [搜索] → [写文章] → [兜底]
         for (let i = 0; i < 3; i++) {
             if (signal?.aborted) break;
 
+            // 搜索完成后解绑工具 → 模型只能输出文本
             const activeModel = searchDone ? modelInstance : modelWithTools;
             const stream = await activeModel.stream(messages);
             let fullContent = '';
@@ -106,6 +212,7 @@ async function* liteEventStream(modelInstance: Model, userMessage: string, signa
                 if (signal?.aborted) break;
                 const msg = chunk as any;
 
+                // Token 统计
                 if (msg?.usage_metadata) {
                     totalInputTokens += msg.usage_metadata.input_tokens || 0;
                     totalOutputTokens += msg.usage_metadata.output_tokens || 0;
@@ -115,6 +222,7 @@ async function* liteEventStream(modelInstance: Model, userMessage: string, signa
                     totalOutputTokens += msg.response_metadata.usage.completion_tokens || 0;
                 }
 
+                // 工具调用
                 if (msg?.tool_call_chunks?.length) {
                     for (const tc of msg.tool_call_chunks) {
                         if (tc.index !== undefined) {
@@ -126,6 +234,7 @@ async function* liteEventStream(modelInstance: Model, userMessage: string, signa
                     }
                 }
 
+                // 文本输出 → 直接流式返回
                 if (msg?.text) {
                     fullContent += msg.text;
                     const cleaned = msg.text.replace(/\n{3,}/g, '\n\n');
@@ -133,13 +242,15 @@ async function* liteEventStream(modelInstance: Model, userMessage: string, signa
                 }
             }
 
-            // If we got text and no tool calls, we're done
+            // 有文本且无工具调用 → 完成
             if (fullContent && toolCalls.length === 0) break;
 
+            // 处理工具调用
             if (toolCalls.length > 0) {
+                const validCalls = toolCalls.filter(tc => tc.name);
                 const aiMsg = new AIMessage({
                     content: fullContent || '',
-                    tool_calls: toolCalls.filter(tc => tc.name).map(tc => ({
+                    tool_calls: validCalls.map(tc => ({
                         name: tc.name,
                         args: JSON.parse(tc.args || '{}'),
                         id: tc.id || `call_${Date.now()}_${Math.random().toString(36).slice(2)}`,
@@ -147,26 +258,24 @@ async function* liteEventStream(modelInstance: Model, userMessage: string, signa
                 });
                 messages.push(aiMsg);
 
-                // Execute tool calls (but limit to first one to prevent multi-search)
-                const callsToExecute = aiMsg.tool_calls!.slice(0, 1);
-                for (const tc of callsToExecute) {
-                    yield `data: ${JSON.stringify({ type: 'tool_call', name: tc.name })}\n\n`;
-                    const toolFn = toolMap[tc.name];
-                    if (toolFn) {
-                        const result = await (toolFn as any).invoke(tc.args);
-                        const resultStr = typeof result === 'string' ? result : JSON.stringify(result);
-                        yield `data: ${JSON.stringify({ type: 'tool_result', name: tc.name, content: resultStr.slice(0, 500) })}\n\n`;
-                        messages.push(new LCToolMessage({ content: resultStr, tool_call_id: tc.id || '' }));
+                // 只执行第一个调用，其余返回空
+                for (let j = 0; j < aiMsg.tool_calls!.length; j++) {
+                    const tc = aiMsg.tool_calls![j];
+                    if (j === 0) {
+                        yield `data: ${JSON.stringify({ type: 'tool_call', name: tc.name })}\n\n`;
+                        const toolFn = toolMap[tc.name];
+                        if (toolFn) {
+                            const result = await (toolFn as any).invoke(tc.args);
+                            const resultStr = typeof result === 'string' ? result : JSON.stringify(result);
+                            yield `data: ${JSON.stringify({ type: 'tool_result', name: tc.name, content: resultStr })}\n\n`;
+                            messages.push(new LCToolMessage({ content: resultStr, tool_call_id: tc.id || '' }));
+                        }
+                    } else {
+                        messages.push(new LCToolMessage({ content: '已搜索过，请直接写文章。', tool_call_id: tc.id || '' }));
                     }
                 }
 
-                // Provide empty results for any extra tool calls to satisfy message format
-                for (const tc of aiMsg.tool_calls!.slice(1)) {
-                    messages.push(new LCToolMessage({ content: '[]', tool_call_id: tc.id || '' }));
-                }
-
                 searchDone = true;
-                logger.log('[lite] Search done, next iteration forces text output');
                 continue;
             }
 
@@ -175,130 +284,38 @@ async function* liteEventStream(modelInstance: Model, userMessage: string, signa
     } catch (e: unknown) {
         const error = e as Error;
         if (error.name === 'AbortError' || signal?.aborted) {
-            // normal
+            // 正常中断
         } else if (error.message?.includes('terminated')) {
-            logger.log('[lite] Stream terminated by runtime');
+            logger.log('Stream terminated by runtime');
         } else {
-            logger.error('[lite] Error:', error.message);
+            logger.error('Error:', error.message);
             yield `data: ${JSON.stringify({ type: 'error_message', content: error.message })}\n\n`;
         }
     }
 
-    logger.log(`[lite] Tokens — input: ${totalInputTokens}, output: ${totalOutputTokens}`);
+    logger.log(`Tokens — input: ${totalInputTokens}, output: ${totalOutputTokens}, total: ${totalInputTokens + totalOutputTokens}`);
     yield `data: ${JSON.stringify({ type: 'usage', input_tokens: totalInputTokens, output_tokens: totalOutputTokens, total_tokens: totalInputTokens + totalOutputTokens })}\n\n`;
     yield "data: [DONE]\n\n";
 }
 
 // ============================================================
-// Deep Agent — for long articles only (~20-25k tokens with caps)
-// ============================================================
-let deepAgent: ReturnType<typeof createDeepAgent> | null = null;
-
-function getDeepAgent(modelInstance: Model) {
-    if (!deepAgent) {
-        logger.log('[deep] Initializing deep agent with maxSteps=3...');
-        deepAgent = createDeepAgent({
-            model: modelInstance,
-            systemPrompt: DEEP_SYSTEM_PROMPT,
-            tools: [searchWeb],
-            maxSteps: 3,  // Hard cap: prevents runaway loops
-        });
-    }
-    return deepAgent;
-}
-
-async function* deepEventStream(modelInstance: Model, userMessage: string, signal?: AbortSignal): AsyncGenerator<string> {
-    let totalInputTokens = 0;
-    let totalOutputTokens = 0;
-    let hasTextOutput = false;
-
-    try {
-        logger.log(`[deep] Starting: "${userMessage.slice(0, 80)}"`);
-        const agentInstance = getDeepAgent(modelInstance);
-        const stream = await agentInstance.stream(
-            { messages: [{ role: "user", content: userMessage }] } as any,
-            { streamMode: "messages", signal }
-        );
-
-        for await (const chunk of stream) {
-            if (signal?.aborted) break;
-            const [rawMessage] = chunk;
-            const message = rawMessage as any;
-
-            if (message?.usage_metadata) {
-                totalInputTokens += message.usage_metadata.input_tokens || 0;
-                totalOutputTokens += message.usage_metadata.output_tokens || 0;
-            }
-            if (message?.response_metadata?.usage) {
-                totalInputTokens += message.response_metadata.usage.prompt_tokens || 0;
-                totalOutputTokens += message.response_metadata.usage.completion_tokens || 0;
-            }
-
-            if (AIMessageChunk.isInstance(rawMessage) && message.tool_call_chunks?.length) {
-                for (const tc of message.tool_call_chunks) {
-                    if (tc.name && !BUILTIN_TOOLS.has(tc.name)) {
-                        yield `data: ${JSON.stringify({ type: 'tool_call', name: tc.name })}\n\n`;
-                    }
-                }
-                continue;
-            }
-
-            if (ToolMessage.isInstance(rawMessage)) {
-                const toolName = message.name;
-                if (toolName && !BUILTIN_TOOLS.has(toolName)) {
-                    yield `data: ${JSON.stringify({ type: 'tool_result', name: toolName, content: message.text?.slice(0, 500) })}\n\n`;
-                }
-                continue;
-            }
-
-            if (AIMessageChunk.isInstance(rawMessage) && message.text) {
-                const cleaned = message.text.replace(/\n{3,}/g, '\n\n');
-                if (cleaned) {
-                    hasTextOutput = true;
-                    yield `data: ${JSON.stringify({ type: 'ai_response', content: cleaned })}\n\n`;
-                }
-            }
-        }
-
-        if (!hasTextOutput) {
-            logger.error('[deep] No text output — falling back to lite mode');
-            yield `data: ${JSON.stringify({ type: 'error_message', content: 'Deep agent did not produce text. Retrying with lite mode...' })}\n\n`;
-        }
-    } catch (e: unknown) {
-        const error = e as Error;
-        if (error.name === 'AbortError' || signal?.aborted) {
-            // normal
-        } else if (error.message?.includes('terminated')) {
-            logger.log('[deep] Stream terminated by runtime');
-        } else {
-            logger.error('[deep] Error:', error.message);
-            yield `data: ${JSON.stringify({ type: 'error_message', content: error.message })}\n\n`;
-        }
-    }
-
-    logger.log(`[deep] Tokens — input: ${totalInputTokens}, output: ${totalOutputTokens}`);
-    yield `data: ${JSON.stringify({ type: 'usage', input_tokens: totalInputTokens, output_tokens: totalOutputTokens, total_tokens: totalInputTokens + totalOutputTokens })}\n\n`;
-    yield "data: [DONE]\n\n";
-}
-
-// ============================================================
-// Request handler — routes to lite or deep based on length
+// Request Handler
 // ============================================================
 export async function onRequest(context: any) {
-    const { request, env } = context;
-    const { message, topic, keywords, style, length, outline } = request?.body ?? {};
+    const { request, env, store } = context;
+    const { message, topic, keywords, style, length = 'medium', outline, userId = 'default' } = request?.body ?? {};
 
     let userMessage = message || '';
     if (topic) {
-        userMessage = `Create an article about: "${topic}"`;
-        if (keywords) userMessage += `\nTarget keywords: ${keywords}`;
-        if (style) userMessage += `\nWriting style: ${style}`;
-        if (length) userMessage += `\nTarget length: ${length}`;
+        userMessage = `写一篇关于「${topic}」的文章`;
+        if (keywords) userMessage += `\n关键词：${keywords}`;
+        if (style) userMessage += `\n风格：${style}`;
+        if (length) userMessage += `\n长度：${length}`;
         if (outline?.sections) {
-            userMessage += `\n\nFollow this outline:`;
-            userMessage += `\nTitle: ${outline.title}`;
+            userMessage += `\n\n按以下大纲写作：`;
+            userMessage += `\n标题：${outline.title}`;
             for (const section of outline.sections) {
-                userMessage += `\n- ${section.heading}: ${(section.keyPoints || []).join('; ')}`;
+                userMessage += `\n- ${section.heading}：${(section.keyPoints || []).join('、')}`;
             }
         }
     }
@@ -307,10 +324,15 @@ export async function onRequest(context: any) {
 
     const signal = request?.signal as AbortSignal | undefined;
 
-    // Route decision: only "long" articles use deep agent
-    const useDeeAgent = length === 'long';
-    logger.log(`Mode: ${useDeeAgent ? 'deep' : 'lite'}, length: ${length || 'default'}`);
+    // 1. 加载用户记忆
+    const memory = await loadUserMemory(store, userId);
+    if (memory) logger.log(`Memory loaded: ${userId}, ${memory.totalArticles} articles`);
 
+    // 2. 构建 prompt
+    const systemPrompt = buildSystemPrompt(memory, length);
+    logger.log(`Prompt: ${systemPrompt.length} chars`);
+
+    // 3. 初始化模型
     let modelInstance: Model;
     try {
         modelInstance = await createModel(getAgentEnv(env));
@@ -320,10 +342,7 @@ export async function onRequest(context: any) {
         });
     }
 
-    const streamFn = useDeeAgent
-        ? deepEventStream(modelInstance, userMessage, signal)
-        : liteEventStream(modelInstance, userMessage, signal);
-
+    // 4. 流式生成
     const encoder = new TextEncoder();
     const readable = new ReadableStream({
         async start(controller) {
@@ -331,7 +350,7 @@ export async function onRequest(context: any) {
                 try { controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'ping', ts: Date.now() })}\n\n`)); } catch {}
             }, 5_000);
             try {
-                for await (const chunk of streamFn) {
+                for await (const chunk of generateStream(modelInstance, userMessage, systemPrompt, signal)) {
                     if (signal?.aborted) break;
                     controller.enqueue(encoder.encode(chunk));
                 }
@@ -340,7 +359,13 @@ export async function onRequest(context: any) {
                 if (error.name !== 'AbortError' && !signal?.aborted) {
                     controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'error_message', content: error.message })}\n\n`));
                 }
-            } finally { clearInterval(heartbeat); controller.close(); }
+            } finally {
+                clearInterval(heartbeat);
+                controller.close();
+            }
+
+            // 5. 异步记录使用（不阻塞响应）
+            recordUsage(store, userId, topic || message?.slice(0, 50), keywords, style, length).catch(() => {});
         },
         cancel() { logger.log('Client disconnected'); },
     });

@@ -69,17 +69,33 @@ export async function onRequest(context: any) {
             new HumanMessage(userMessage),
         ]);
 
-        const text = (response as any).text || (response as any).content || '';
+        const rawContent = (response as any).content;
+        const text = typeof rawContent === 'string'
+            ? rawContent
+            : Array.isArray(rawContent)
+                ? rawContent.map((c: any) => typeof c === 'string' ? c : c.text || '').join('')
+                : String(rawContent || '');
         logger.log('Raw outline response:', text.slice(0, 200));
 
-        // Parse JSON from response (handle potential markdown fences)
+        // Parse JSON from response (handle markdown fences, leading/trailing text)
         let outline: any;
         try {
+            // Strategy 1: strip markdown fences and parse directly
             const jsonStr = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
             outline = JSON.parse(jsonStr);
         } catch {
-            // If JSON parse fails, return raw text for frontend to handle
-            logger.error('Failed to parse outline JSON, returning raw');
+            // Strategy 2: extract the first JSON object from the text
+            try {
+                const jsonMatch = text.match(/\{[\s\S]*\}/);
+                if (jsonMatch) {
+                    outline = JSON.parse(jsonMatch[0]);
+                }
+            } catch {}
+        }
+
+        // Validate parsed outline has required structure
+        if (!outline || !Array.isArray(outline.sections) || outline.sections.length === 0) {
+            logger.error('Failed to parse outline JSON or invalid structure, returning raw');
             outline = {
                 title: topic,
                 summary: 'Auto-generated outline',
