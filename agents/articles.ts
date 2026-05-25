@@ -29,7 +29,11 @@ function getArticleStore() {
     if (projectId && token) {
         return getStore({ name: 'articles', projectId, token });
     }
-    return getStore('articles');
+    try {
+        return getStore('articles');
+    } catch (e) {
+        return null;
+    }
 }
 
 function computeWordCount(content: string): number {
@@ -52,6 +56,12 @@ export async function onRequest(context: any) {
 
     try {
         const store = getArticleStore();
+        if (!store) {
+            return createResponse({
+                error: 'BLOB_NOT_CONFIGURED',
+                message: 'Blob storage is not configured. Please set BLOB_PROJECT_ID and BLOB_TOKEN environment variables, or deploy to EdgeOne Pages for automatic configuration.',
+            }, 503);
+        }
 
         switch (action) {
             case 'list': {

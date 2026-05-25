@@ -39,7 +39,11 @@ function getPreferenceStore() {
     if (projectId && token) {
         return getStore({ name: 'preferences', projectId, token });
     }
-    return getStore('preferences');
+    try {
+        return getStore('preferences');
+    } catch {
+        return null;
+    }
 }
 
 function createDefaultPreferences(userId: string): UserPreferences {
@@ -154,6 +158,13 @@ export async function onRequest(context: any) {
         } else {
             // --- Blob Storage Fallback ---
             const store = getPreferenceStore();
+            if (!store) {
+                return createResponse({
+                    error: 'BLOB_NOT_CONFIGURED',
+                    message: 'Blob storage is not configured. Please set BLOB_PROJECT_ID and BLOB_TOKEN environment variables, or deploy to EdgeOne Pages.',
+                    preferences: createDefaultPreferences(userId),
+                }, 200);
+            }
             const key = `pref-${userId}`;
 
             switch (action) {

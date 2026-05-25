@@ -46,6 +46,7 @@ export function ArticleHistory({
   const [articles, setArticles] = useState<ArticleRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [savedToast, setSavedToast] = useState(false);
+  const [blobError, setBlobError] = useState<string | null>(null);
 
   const fetchArticles = useCallback(async () => {
     try {
@@ -56,7 +57,13 @@ export function ArticleHistory({
       });
       if (res.ok) {
         const data = await res.json();
-        setArticles(data.articles || []);
+        if (data.error === 'BLOB_NOT_CONFIGURED') {
+          setBlobError(data.message);
+          setArticles([]);
+        } else {
+          setBlobError(null);
+          setArticles(data.articles || []);
+        }
       }
     } catch {
       // silently fail
@@ -215,6 +222,16 @@ export function ArticleHistory({
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
             </svg>
             <span className="text-xs text-gray-400">{(t as any).loading || '加载中...'}</span>
+          </div>
+        ) : blobError ? (
+          <div className="py-4 px-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
+            <p className="text-xs font-medium text-amber-700 dark:text-amber-400 mb-1">⚠️ 存储未配置</p>
+            <p className="text-[11px] text-amber-600 dark:text-amber-500 leading-relaxed">
+              本地开发需在 .env 中配置 BLOB_PROJECT_ID 和 BLOB_TOKEN 才能使用文章历史功能。
+            </p>
+            <a href="https://cloud.tencent.com/document/product/1552/131425" target="_blank" rel="noopener noreferrer" className="text-[11px] text-amber-700 dark:text-amber-400 underline mt-1 inline-block hover:text-amber-800">
+              查看环境变量获取方式 →
+            </a>
           </div>
         ) : articles.length === 0 ? (
           <p className="py-4 text-center text-sm text-gray-500 dark:text-gray-400">{t.noHistory}</p>
