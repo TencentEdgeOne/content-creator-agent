@@ -145,8 +145,8 @@ Default: `@Pages/deepseek-v4-flash`. To change, update the `MODEL_NAME` constant
 | Model | Best For |
 |-------|---------|
 | `@Pages/deepseek-v4-flash` | **Recommended** — Fast, good instruction following |
-| `@Pages/kimi-k2.6` | Long-form writing (needs temperature=1) |
-| `@Pages/glm-5.1` | Good Chinese comprehension, slower |
+| `@Pages/minimax-m2.7` | General purpose |
+| `@Pages/hy3-preview` | General purpose |
 
 ## Tech Stack
 

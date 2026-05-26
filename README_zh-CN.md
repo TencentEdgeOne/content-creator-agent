@@ -156,8 +156,6 @@ ping          — 心跳保活
 | 模型 | 推荐场景 |
 |------|---------|
 | `@Pages/deepseek-v4-flash` | **推荐** — 响应快、遵从指令好 |
-| `@Pages/kimi-k2.6` | 长文写作（需 temperature=1） |
-| `@Pages/glm-5.1` | 中文理解好，响应较慢 |
 | `@Pages/minimax-m2.7` | 通用 |
 | `@Pages/hy3-preview` | 通用 |
 
