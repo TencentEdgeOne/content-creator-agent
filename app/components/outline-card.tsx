@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { Card, CardHeader, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
@@ -81,17 +80,51 @@ export function OutlineCard({
   };
 
   return (
-    <Card>
-      <CardHeader>
-        <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100 flex items-center gap-2">
-          <svg className="h-4 w-4 text-brand-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+    <div className="rounded-xl border border-brand-200 dark:border-brand-800 bg-white dark:bg-gray-900 shadow-sm overflow-hidden flex flex-col" style={{ maxHeight: 'calc(100vh - 120px)' }}>
+      {/* Sticky top action bar */}
+      <div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-gray-100 dark:border-gray-800 bg-white/95 dark:bg-gray-900/95 backdrop-blur-sm px-5 py-3">
+        <div className="flex items-center gap-2 min-w-0">
+          <svg className="h-4 w-4 text-brand-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
           </svg>
-          {(t as any).outlineTitle ?? "文章大纲"}
-        </h2>
-      </CardHeader>
+          <span className="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate">
+            {(t as any).outlineReady ?? "大纲已生成，请确认或调整"}
+          </span>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors px-2 py-1"
+            disabled={isLoading}
+            onClick={onDismiss}
+          >
+            {(t as any).skipOutline ?? "跳过"}
+          </button>
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={isLoading}
+            onClick={onRegenerate}
+          >
+            <svg className="mr-1 h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+            {(t as any).regenerateOutline ?? "重新生成"}
+          </Button>
+          <Button
+            size="sm"
+            disabled={isLoading}
+            onClick={() => onConfirm(editedOutline)}
+          >
+            <svg className="mr-1 h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+            </svg>
+            {(t as any).confirmOutline ?? "确认并开始写作"}
+          </Button>
+        </div>
+      </div>
 
-      <CardContent className="space-y-4">
+      {/* Scrollable outline content */}
+      <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
         {/* Article title */}
         {editingTitle ? (
           <input
@@ -106,7 +139,6 @@ export function OutlineCard({
           <button
             className="group w-full text-left"
             onClick={() => setEditingTitle(true)}
-            title="点击编辑标题"
           >
             <p className="text-base font-semibold text-gray-900 dark:text-gray-100 group-hover:text-brand-600 dark:group-hover:text-brand-400 transition-colors">
               {editedOutline.title}
@@ -115,23 +147,22 @@ export function OutlineCard({
           </button>
         )}
 
-        {/* Summary */}
-        <p className="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
-          {editedOutline.summary}
-        </p>
-
-        {/* Tone badge */}
-        {editedOutline.tone && (
-          <span className="inline-block rounded-full bg-brand-50 dark:bg-brand-900/30 px-2 py-0.5 text-xs text-brand-600 dark:text-brand-400 border border-brand-200 dark:border-brand-800">
-            {editedOutline.tone}
-          </span>
-        )}
+        {/* Summary & tone */}
+        <div className="flex items-start gap-2">
+          <p className="text-xs text-gray-500 dark:text-gray-400 leading-relaxed flex-1">
+            {editedOutline.summary}
+          </p>
+          {editedOutline.tone && (
+            <span className="shrink-0 rounded-full bg-brand-50 dark:bg-brand-900/30 px-2 py-0.5 text-xs text-brand-600 dark:text-brand-400 border border-brand-200 dark:border-brand-800">
+              {editedOutline.tone}
+            </span>
+          )}
+        </div>
 
         {/* Sections */}
         <ol className="space-y-3">
           {editedOutline.sections.map((section, si) => (
             <li key={si} className="rounded-lg border border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50 p-3 space-y-2">
-              {/* Section heading */}
               {editingTitleIndex === si ? (
                 <input
                   autoFocus
@@ -145,7 +176,6 @@ export function OutlineCard({
                 <button
                   className="group flex w-full items-start gap-2 text-left"
                   onClick={() => setEditingTitleIndex(si)}
-                  title="点击编辑标题"
                 >
                   <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-brand-100 dark:bg-brand-900/50 text-xs font-semibold text-brand-600 dark:text-brand-400">
                     {si + 1}
@@ -157,7 +187,6 @@ export function OutlineCard({
                 </button>
               )}
 
-              {/* Key points */}
               <ul className="ml-7 space-y-1">
                 {section.keyPoints.map((point, pi) => (
                   <li key={pi} className="flex items-center gap-1.5">
@@ -174,13 +203,11 @@ export function OutlineCard({
                         section.keyPoints.length <= 1 && "invisible"
                       )}
                       onClick={() => removeKeyPoint(si, pi)}
-                      title="删除要点"
                     >
                       ✕
                     </button>
                   </li>
                 ))}
-
                 <li>
                   <button
                     className="mt-1 text-xs text-brand-500 dark:text-brand-400 hover:text-brand-700 dark:hover:text-brand-300 transition-colors"
@@ -200,47 +227,12 @@ export function OutlineCard({
           ))}
         </ol>
 
-        {/* Estimated total words */}
         {editedOutline.estimatedTotalWords && (
           <p className="text-right text-xs text-gray-400 dark:text-gray-500">
             {(t as any).estimatedWords ?? "预计总字数"}：~{editedOutline.estimatedTotalWords} 字
           </p>
         )}
-
-        {/* Actions */}
-        <div className="flex flex-col gap-2 pt-1">
-          <Button
-            className="w-full"
-            disabled={isLoading}
-            onClick={() => onConfirm(editedOutline)}
-          >
-            <svg className="mr-2 h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
-            </svg>
-            {(t as any).confirmOutline ?? "确认并开始写作"}
-          </Button>
-
-          <Button
-            variant="secondary"
-            className="w-full"
-            disabled={isLoading}
-            onClick={onRegenerate}
-          >
-            <svg className="mr-2 h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-            </svg>
-            {(t as any).regenerateOutline ?? "重新生成大纲"}
-          </Button>
-
-          <button
-            className="w-full py-1.5 text-xs text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
-            disabled={isLoading}
-            onClick={onDismiss}
-          >
-            {(t as any).skipOutline ?? "跳过，直接生成"}
-          </button>
-        </div>
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 }

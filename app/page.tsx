@@ -350,6 +350,9 @@ export default function Home() {
           updateStep(step, "done");
         }
 
+        // Strip any leaked model internal markup (DSML)
+        setContent((prev) => prev.replace(/<[｜|]*DSML[｜|]*[^>]*>[\s\S]*?<\/[｜|]*DSML[｜|]*[^>]*>/g, '').replace(/<[｜|]*DSML[\s\S]*/g, '').trim());
+
         // Trigger auto-save after generation completes (creates new article)
         setShouldAutoSave(true);
 
@@ -387,7 +390,7 @@ export default function Home() {
   const handleStop = useCallback(() => {
     abortController?.abort();
     setIsGenerating(false);
-    // Notify backend to cancel the active run
+    setIsGeneratingOutline(false);
     fetch("/stop", {
       method: "POST",
       headers: {

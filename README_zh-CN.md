@@ -151,13 +151,13 @@ ping          — 心跳保活
 
 ## 使用模型
 
-默认使用 `@Pages/deepseek-v4-flash`，如需更换请修改 `agents/_shared.ts` 中的 `MODEL_NAME` 常量。
+默认使用 `@makers/deepseek-v4-flash`，如需更换请修改 `agents/_shared.ts` 中的 `MODEL_NAME` 常量。
 
 | 模型 | 推荐场景 |
 |------|---------|
-| `@Pages/deepseek-v4-flash` | **推荐** — 响应快、遵从指令好 |
-| `@Pages/minimax-m2.7` | 通用 |
-| `@Pages/hy3-preview` | 通用 |
+| `@makers/deepseek-v4-flash` | **推荐** — 响应快、遵从指令好 |
+| `@makers/minimax-m2.7` | 通用 |
+| `@makers/hy3-preview` | 通用 |
 
 ## 技术栈
 

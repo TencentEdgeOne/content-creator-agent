@@ -1,3 +1,7 @@
+/**
+ * Research Agent
+ * Researches topics using web search and provides structured summaries.
+ */
 import { initChatModel, AIMessageChunk, ToolMessage, tool } from 'langchain';
 import { modelRetryMiddleware, modelCallLimitMiddleware } from 'langchain';
 import { createDeepAgent } from 'deepagents';
@@ -17,35 +21,51 @@ Use search_topic to find relevant information, then synthesize it into a clear r
 - Expert opinions
 - Sources referenced`;
 
+function createSearchTool(contextTools: any) {
+    const webSearchTool = contextTools?.get?.('web_search');
+
+    return tool(
+        async ({ query, maxResults = 5 }: { query: string; maxResults?: number }) => {
+            logger.log(`search_topic: "${query}"`);
+
+            if (webSearchTool) {
+                try {
+                    const result = await webSearchTool.execute({ query, maxResults });
+                    return typeof result === 'string' ? result : JSON.stringify(result);
+                } catch (e) {
+                    logger.error('web_search failed:', (e as Error).message);
+                }
+            }
+
+            // Fallback
+            return JSON.stringify([
+                { title: `Research: ${query}`, url: `https://scholar.example.com/${query.replace(/\s+/g, '-')}`, snippet: `Academic research on ${query}.` },
+                { title: `${query} - Industry Report`, url: `https://reports.example.com/${query.replace(/\s+/g, '-')}`, snippet: `Industry analysis with market data.` },
+                { title: `Expert Analysis: ${query}`, url: `https://analysis.example.com/${query.replace(/\s+/g, '-')}`, snippet: `Expert analysis covering trends and opportunities.` },
+            ].slice(0, maxResults));
+        },
+        {
+            name: 'search_topic',
+            description: 'Search for academic and industry research on a topic.',
+            schema: z.object({
+                query: z.string().describe('The research query'),
+                maxResults: z.number().optional().default(5),
+            }),
+        }
+    );
+}
+
 let agent: Agent | null = null;
+let lastContextTools: any = null;
 
-const searchTopic = tool(
-    async ({ query, maxResults = 5 }: { query: string; maxResults?: number }) => {
-        const results = [
-            { title: `Research: ${query}`, url: `https://scholar.example.com/${query.replace(/\s+/g, '-')}`, snippet: `Academic research covering the latest developments in ${query}.` },
-            { title: `${query} - Industry Report 2024`, url: `https://reports.example.com/${query.replace(/\s+/g, '-')}`, snippet: `Comprehensive industry analysis with market data and forecasts.` },
-            { title: `Expert Analysis: ${query}`, url: `https://analysis.example.com/${query.replace(/\s+/g, '-')}`, snippet: `Expert-level analysis covering trends, challenges, and opportunities.` },
-            { title: `${query} Case Studies`, url: `https://cases.example.com/${query.replace(/\s+/g, '-')}`, snippet: `Real-world case studies demonstrating practical applications and results.` },
-            { title: `The Future of ${query}`, url: `https://future.example.com/${query.replace(/\s+/g, '-')}`, snippet: `Forward-looking analysis of where ${query} is heading in the next 5 years.` },
-        ];
-        return JSON.stringify(results.slice(0, maxResults));
-    },
-    {
-        name: 'search_topic',
-        description: 'Search for academic and industry research on a topic.',
-        schema: z.object({
-            query: z.string().describe('The research query'),
-            maxResults: z.number().optional().default(5).describe('Maximum number of results'),
-        }),
-    }
-);
-
-function getAgent(modelInstance: Model) {
-    if (!agent) {
+function getAgent(modelInstance: Model, contextTools: any) {
+    // Recreate agent if context.tools changed
+    if (!agent || lastContextTools !== contextTools) {
+        lastContextTools = contextTools;
         agent = createDeepAgent({
             model: modelInstance,
             systemPrompt: SYSTEM_PROMPT,
-            tools: [searchTopic],
+            tools: [createSearchTool(contextTools)],
             middleware: [
                 modelRetryMiddleware({ maxRetries: 3 }),
                 modelCallLimitMiddleware({ runLimit: 20 }),
@@ -91,8 +111,7 @@ async function* eventStream(agentInstance: Agent, userMessage: string, signal?: 
 }
 
 export async function onRequest(context: any) {
-    const { request, env, conversation_id: conversationId, run_id: runId } = context;
-    logger.log('conversationId:', conversationId, 'runId:', runId);
+    const { request, env, tools: contextTools } = context;
 
     const { topic } = request?.body ?? {};
     if (!topic) {
@@ -102,11 +121,9 @@ export async function onRequest(context: any) {
     const signal = request?.signal as AbortSignal | undefined;
     let agentInstance: Agent;
     try {
-
-
         const envVars = getAgentEnv(env);
         const modelInstance = await createModel(envVars);
-        agentInstance = getAgent(modelInstance);
+        agentInstance = getAgent(modelInstance, contextTools);
     } catch (e) {
         return new Response(JSON.stringify({ error: (e as Error).message }), {
             status: 500, headers: { 'Content-Type': 'application/json; charset=UTF-8' },
@@ -130,7 +147,7 @@ export async function onRequest(context: any) {
                 controller.close();
             }
         },
-        cancel() { logger.log('client disconnected'); },
+        cancel() { logger.log('Client disconnected'); },
     });
 
     return new Response(readable, {

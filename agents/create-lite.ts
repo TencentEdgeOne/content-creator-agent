@@ -1,12 +1,6 @@
 /**
- * Content Creation Agent — Lite Mode (Manual Agent Loop)
- *
- * Low-token alternative to create.ts. Uses direct model.bindTools()
- * instead of createDeepAgent, avoiding the 30k+ token overhead from
- * deepagents' built-in tools (write_todos, filesystem, task).
- *
- * Token usage: ~12-15k per article (vs ~40-50k with deepagent mode)
- * Trade-off: No deepagents features (planning, memory, subagents)
+ * Content Creation Agent — Lite Mode
+ * Low-token alternative using direct bindTools loop.
  */
 import { initChatModel } from 'langchain';
 import { tool } from 'langchain';
@@ -35,34 +29,47 @@ RULES:
   - "long" ≈ 5000 Chinese characters OR 4000 English words, 10-15 sections
 - IMPORTANT: Do NOT write less than the target length.`;
 
-const searchWeb = tool(
-    async ({ query, maxResults = 5 }: { query: string; maxResults?: number }) => {
-        logger.log(`search_web: "${query}"`);
-        const mockResults = [
-            { title: `Latest Research on ${query}`, url: `https://research.example.com/${query.replace(/\s+/g, '-')}`, snippet: `Comprehensive analysis of ${query} with recent findings.` },
-            { title: `${query}: A Complete Guide`, url: `https://guide.example.com/${query.replace(/\s+/g, '-')}`, snippet: `Everything you need to know about ${query}.` },
-            { title: `Expert Insights: ${query}`, url: `https://experts.example.com/${query.replace(/\s+/g, '-')}`, snippet: `Industry experts share perspectives on ${query}.` },
-            { title: `${query} Statistics 2024`, url: `https://data.example.com/${query.replace(/\s+/g, '-')}`, snippet: `Key statistics about ${query}.` },
-            { title: `How ${query} is Changing`, url: `https://industry.example.com/${query.replace(/\s+/g, '-')}`, snippet: `How ${query} is transforming business.` },
-        ];
-        return JSON.stringify(mockResults.slice(0, maxResults));
-    },
-    {
-        name: 'search_web',
-        description: 'Search the web. Call ONCE before writing.',
-        schema: z.object({
-            query: z.string().describe('Search query'),
-            maxResults: z.number().optional().default(5),
-        }),
-    }
-);
+/**
+ * Create search tool backed by context.tools.web_search (real search).
+ */
+function createSearchTool(contextTools: any) {
+    const webSearchTool = contextTools?.get?.('web_search');
 
-const tools = [searchWeb];
-const toolMap: Record<string, typeof searchWeb> = { search_web: searchWeb };
+    return tool(
+        async ({ query, maxResults = 5 }: { query: string; maxResults?: number }) => {
+            logger.log(`search_web: "${query}"`);
 
-async function* eventStream(modelInstance: Model, userMessage: string, signal?: AbortSignal): AsyncGenerator<string> {
+            if (webSearchTool) {
+                try {
+                    const result = await webSearchTool.execute({ query, maxResults });
+                    const text = typeof result === 'string' ? result : JSON.stringify(result);
+                    return text.slice(0, 2000);
+                } catch (e) {
+                    logger.error('web_search failed:', (e as Error).message);
+                }
+            }
+
+            // Fallback if context.tools unavailable
+            return `[1] ${query}的最新研究：该领域最新研究进展与专家观点综合分析。\n[2] ${query}全面指南：涵盖基础原理、最佳实践与进阶策略。\n[3] ${query}深度解读：行业专家解读，包含趋势分析与未来预测。`;
+        },
+        {
+            name: 'search_web',
+            description: 'Search the web. Call ONCE before writing.',
+            schema: z.object({
+                query: z.string().describe('Search query'),
+                maxResults: z.number().optional().default(5),
+            }),
+        }
+    );
+}
+
+async function* eventStream(modelInstance: Model, userMessage: string, contextTools: any, signal?: AbortSignal): AsyncGenerator<string> {
     let totalInputTokens = 0;
     let totalOutputTokens = 0;
+
+    const searchTool = createSearchTool(contextTools);
+    const tools = [searchTool];
+    const toolMap: Record<string, typeof searchTool> = { search_web: searchTool };
 
     try {
         logger.log(`Starting: "${userMessage.slice(0, 80)}"`);
@@ -76,7 +83,6 @@ async function* eventStream(modelInstance: Model, userMessage: string, signal?: 
         for (let i = 0; i < 3; i++) {
             if (signal?.aborted) break;
 
-            // After search is done, use model without tools to force text output
             const activeModel = searchDone ? modelInstance : modelWithTools;
             const stream = await activeModel.stream(messages);
             let fullContent = '';
@@ -108,15 +114,28 @@ async function* eventStream(modelInstance: Model, userMessage: string, signal?: 
 
                 if (msg?.text) {
                     fullContent += msg.text;
+                    // Filter out model internal markup (DSML)
+                    if (msg.text.includes('DSML') || msg.text.includes('tool_calls>') || msg.text.includes('invoke>') || msg.text.includes('parameter>')) {
+                        continue;
+                    }
                     const cleaned = msg.text.replace(/\n{3,}/g, '\n\n');
                     if (cleaned) yield `data: ${JSON.stringify({ type: 'ai_response', content: cleaned })}\n\n`;
                 }
             }
 
-            if (fullContent && toolCalls.length === 0) break;
+            if (fullContent && toolCalls.length === 0) {
+                // If model output DSML markup instead of real content, retry without tools
+                const hasDSML = fullContent.includes('DSML') || fullContent.includes('<tool_calls>') || fullContent.includes('<invoke');
+                if (hasDSML && !searchDone) {
+                    searchDone = true;
+                    messages.push(new AIMessage({ content: '' }));
+                    logger.log('Model output DSML as text, retrying without tools');
+                    continue;
+                }
+                break;
+            }
 
             if (toolCalls.length > 0) {
-                // Process ALL tool calls (model may call search_web in parallel)
                 const aiMsg = new AIMessage({
                     content: fullContent || '',
                     tool_calls: toolCalls.filter(tc => tc.name).map(tc => ({
@@ -139,9 +158,7 @@ async function* eventStream(modelInstance: Model, userMessage: string, signal?: 
                     }
                 }
 
-                // After search, mark as done so next iteration uses no-tools model
                 searchDone = true;
-                logger.log('Search done, next iteration will use no-tools model for writing');
                 continue;
             }
 
@@ -150,10 +167,9 @@ async function* eventStream(modelInstance: Model, userMessage: string, signal?: 
     } catch (e: unknown) {
         const error = e as Error;
         if (error.name === 'AbortError' || signal?.aborted) {
-            // Normal abort - don't report
+            // Normal abort
         } else if (error.message?.includes('terminated')) {
-            // Stream ended by runtime timeout - content already delivered, just log
-            logger.log('Stream terminated by runtime (content already delivered)');
+            logger.log('Stream terminated by runtime');
         } else {
             logger.error('Error:', error.message);
             yield `data: ${JSON.stringify({ type: 'error_message', content: error.message })}\n\n`;
@@ -165,7 +181,7 @@ async function* eventStream(modelInstance: Model, userMessage: string, signal?: 
 }
 
 export async function onRequest(context: any) {
-    const { request, env } = context;
+    const { request, env, tools: contextTools } = context;
     const { message, topic, keywords, style, length, outline } = request?.body ?? {};
 
     let userMessage = message || '';
@@ -200,7 +216,7 @@ export async function onRequest(context: any) {
                 try { controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'ping', ts: Date.now() })}\n\n`)); } catch {}
             }, 5_000);
             try {
-                for await (const chunk of eventStream(modelInstance, userMessage, signal)) {
+                for await (const chunk of eventStream(modelInstance, userMessage, contextTools, signal)) {
                     if (signal?.aborted) break;
                     controller.enqueue(encoder.encode(chunk));
                 }

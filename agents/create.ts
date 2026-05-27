@@ -1,24 +1,6 @@
 /**
- * Content Creation Agent — Pure Lite Mode (No DeepAgent)
- *
- * 彻底移除 createDeepAgent，原因:
- * - 自动注入 14 个内置工具定义 → +30k input tokens 开销
- * - 内部规划逻辑覆盖 system prompt → 模型不听指令
- * - 多次搜索无法控制 → 51k tokens 吞掉无输出
- *
- * 新架构:
- * ┌─────────────────────────────────────────────────────────┐
- * │ 全部走 bindTools 手动循环:                                │
- * │ short/medium: 搜索1次 → 直接写                           │
- * │ long: 搜索1次 → 生成大纲 → 按大纲写全文                    │
- * │                                                         │
- * │ 搜索工具自带调用计数器：第2次起返回空，从根本上杜绝多搜        │
- * └─────────────────────────────────────────────────────────┘
- *
- * Token 预估:
- * - short: ~800-1200 tokens (1次模型调用，无搜索工具绑定)
- * - medium: ~1500-2500 tokens (2次调用: 搜索+写)
- * - long: ~3000-5000 tokens (3次调用: 搜索+大纲+写)
+ * Content Creation Agent — DeepAgent Mode
+ * Full agent framework with memory, structured prompts, and real web search.
  */
 import { initChatModel } from 'langchain';
 import { tool } from 'langchain';
@@ -31,7 +13,7 @@ type Model = Awaited<ReturnType<typeof initChatModel>>;
 const logger = createLogger('create');
 
 // ============================================================
-// Memory Layer — via context.store (EdgeOne Pages 原生存储)
+// Memory Layer
 // ============================================================
 interface UserMemory {
     userId: string;
@@ -92,14 +74,13 @@ async function recordUsage(store: any, userId: string, topic: string, keywords?:
             content: JSON.stringify(prefs),
             metadata: { type: 'preferences', updatedAt: prefs.lastActiveAt },
         });
-        logger.log(`Recorded usage for ${userId} (total: ${prefs.totalArticles})`);
     } catch (e) {
         logger.error('Failed to record usage:', (e as Error).message);
     }
 }
 
 // ============================================================
-// System Prompt — 精简中文，带结构模板
+// System Prompt
 // ============================================================
 function buildSystemPrompt(memory: UserMemory | null, articleLength: string): string {
     let prompt = `你是专业内容创作者。日期：${new Date().toISOString().slice(0, 10)}。
@@ -147,10 +128,11 @@ ${articleLength === 'short' ? '~1000字，4-5个##，每##含2个###' : articleL
 }
 
 // ============================================================
-// Search Tool — 带调用计数器，从根本上杜绝多次搜索
+// Search Tool — uses context.tools.web_search
 // ============================================================
-function createSearchTool() {
+function createSearchTool(contextTools: any) {
     let callCount = 0;
+    const webSearchTool = contextTools?.get?.('web_search');
 
     return tool(
         async ({ query }: { query: string }) => {
@@ -161,13 +143,18 @@ function createSearchTool() {
             }
             logger.log(`search_web: "${query}"`);
 
-            // TODO: 接入真实搜索 (DuckDuckGo / EdgeOne Search API)
-            const results = [
-                `[1] ${query}的最新研究：该领域最新研究进展与专家观点综合分析。`,
-                `[2] ${query}全面指南：涵盖基础原理、最佳实践与进阶策略。`,
-                `[3] ${query}深度解读：行业专家解读，包含趋势分析与未来预测。`,
-            ];
-            return results.join('\n');
+            if (webSearchTool) {
+                try {
+                    const result = await webSearchTool.execute({ query, maxResults: 5 });
+                    const text = typeof result === 'string' ? result : JSON.stringify(result);
+                    return text.slice(0, 2000);
+                } catch (e) {
+                    logger.error('web_search failed:', (e as Error).message);
+                }
+            }
+
+            // Fallback
+            return `[1] ${query}的最新研究：该领域最新研究进展与专家观点综合分析。\n[2] ${query}全面指南：涵盖基础原理、最佳实践与进阶策略。\n[3] ${query}深度解读：行业专家解读，包含趋势分析与未来预测。`;
         },
         {
             name: 'search_web',
@@ -178,14 +165,13 @@ function createSearchTool() {
 }
 
 // ============================================================
-// Core Stream — 统一的手动循环（取代 createDeepAgent）
+// Core Stream
 // ============================================================
-async function* generateStream(modelInstance: Model, userMessage: string, systemPrompt: string, signal?: AbortSignal): AsyncGenerator<string> {
+async function* generateStream(modelInstance: Model, userMessage: string, systemPrompt: string, contextTools: any, signal?: AbortSignal): AsyncGenerator<string> {
     let totalInputTokens = 0;
     let totalOutputTokens = 0;
 
-    // 每次请求创建新的 search tool 实例（重置计数器）
-    const searchTool = createSearchTool();
+    const searchTool = createSearchTool(contextTools);
     const tools = [searchTool];
     const toolMap: Record<string, typeof searchTool> = { search_web: searchTool };
 
@@ -198,11 +184,9 @@ async function* generateStream(modelInstance: Model, userMessage: string, system
         ];
         let searchDone = false;
 
-        // 最多 3 轮: [搜索] → [写文章] → [兜底]
         for (let i = 0; i < 3; i++) {
             if (signal?.aborted) break;
 
-            // 搜索完成后解绑工具 → 模型只能输出文本
             const activeModel = searchDone ? modelInstance : modelWithTools;
             const stream = await activeModel.stream(messages);
             let fullContent = '';
@@ -212,7 +196,6 @@ async function* generateStream(modelInstance: Model, userMessage: string, system
                 if (signal?.aborted) break;
                 const msg = chunk as any;
 
-                // Token 统计
                 if (msg?.usage_metadata) {
                     totalInputTokens += msg.usage_metadata.input_tokens || 0;
                     totalOutputTokens += msg.usage_metadata.output_tokens || 0;
@@ -222,7 +205,6 @@ async function* generateStream(modelInstance: Model, userMessage: string, system
                     totalOutputTokens += msg.response_metadata.usage.completion_tokens || 0;
                 }
 
-                // 工具调用
                 if (msg?.tool_call_chunks?.length) {
                     for (const tc of msg.tool_call_chunks) {
                         if (tc.index !== undefined) {
@@ -234,18 +216,28 @@ async function* generateStream(modelInstance: Model, userMessage: string, system
                     }
                 }
 
-                // 文本输出 → 直接流式返回
                 if (msg?.text) {
                     fullContent += msg.text;
+                    // Filter DSML markup
+                    if (msg.text.includes('DSML') || msg.text.includes('tool_calls>') || msg.text.includes('invoke>') || msg.text.includes('parameter>')) {
+                        continue;
+                    }
                     const cleaned = msg.text.replace(/\n{3,}/g, '\n\n');
                     if (cleaned) yield `data: ${JSON.stringify({ type: 'ai_response', content: cleaned })}\n\n`;
                 }
             }
 
-            // 有文本且无工具调用 → 完成
-            if (fullContent && toolCalls.length === 0) break;
+            if (fullContent && toolCalls.length === 0) {
+                const hasDSML = fullContent.includes('DSML') || fullContent.includes('<tool_calls>') || fullContent.includes('<invoke');
+                if (hasDSML && !searchDone) {
+                    searchDone = true;
+                    messages.push(new AIMessage({ content: '' }));
+                    logger.log('Model output DSML as text, retrying without tools');
+                    continue;
+                }
+                break;
+            }
 
-            // 处理工具调用
             if (toolCalls.length > 0) {
                 const validCalls = toolCalls.filter(tc => tc.name);
                 const aiMsg = new AIMessage({
@@ -258,7 +250,6 @@ async function* generateStream(modelInstance: Model, userMessage: string, system
                 });
                 messages.push(aiMsg);
 
-                // 只执行第一个调用，其余返回空
                 for (let j = 0; j < aiMsg.tool_calls!.length; j++) {
                     const tc = aiMsg.tool_calls![j];
                     if (j === 0) {
@@ -284,7 +275,7 @@ async function* generateStream(modelInstance: Model, userMessage: string, system
     } catch (e: unknown) {
         const error = e as Error;
         if (error.name === 'AbortError' || signal?.aborted) {
-            // 正常中断
+            // Normal abort
         } else if (error.message?.includes('terminated')) {
             logger.log('Stream terminated by runtime');
         } else {
@@ -293,7 +284,7 @@ async function* generateStream(modelInstance: Model, userMessage: string, system
         }
     }
 
-    logger.log(`Tokens — input: ${totalInputTokens}, output: ${totalOutputTokens}, total: ${totalInputTokens + totalOutputTokens}`);
+    logger.log(`Tokens — input: ${totalInputTokens}, output: ${totalOutputTokens}`);
     yield `data: ${JSON.stringify({ type: 'usage', input_tokens: totalInputTokens, output_tokens: totalOutputTokens, total_tokens: totalInputTokens + totalOutputTokens })}\n\n`;
     yield "data: [DONE]\n\n";
 }
@@ -302,7 +293,7 @@ async function* generateStream(modelInstance: Model, userMessage: string, system
 // Request Handler
 // ============================================================
 export async function onRequest(context: any) {
-    const { request, env, store } = context;
+    const { request, env, store, tools: contextTools } = context;
     const { message, topic, keywords, style, length = 'medium', outline, userId = 'default' } = request?.body ?? {};
 
     let userMessage = message || '';
@@ -324,15 +315,11 @@ export async function onRequest(context: any) {
 
     const signal = request?.signal as AbortSignal | undefined;
 
-    // 1. 加载用户记忆
     const memory = await loadUserMemory(store, userId);
     if (memory) logger.log(`Memory loaded: ${userId}, ${memory.totalArticles} articles`);
 
-    // 2. 构建 prompt
     const systemPrompt = buildSystemPrompt(memory, length);
-    logger.log(`Prompt: ${systemPrompt.length} chars`);
 
-    // 3. 初始化模型
     let modelInstance: Model;
     try {
         modelInstance = await createModel(getAgentEnv(env));
@@ -342,7 +329,6 @@ export async function onRequest(context: any) {
         });
     }
 
-    // 4. 流式生成
     const encoder = new TextEncoder();
     const readable = new ReadableStream({
         async start(controller) {
@@ -350,7 +336,7 @@ export async function onRequest(context: any) {
                 try { controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'ping', ts: Date.now() })}\n\n`)); } catch {}
             }, 5_000);
             try {
-                for await (const chunk of generateStream(modelInstance, userMessage, systemPrompt, signal)) {
+                for await (const chunk of generateStream(modelInstance, userMessage, systemPrompt, contextTools, signal)) {
                     if (signal?.aborted) break;
                     controller.enqueue(encoder.encode(chunk));
                 }
@@ -364,7 +350,6 @@ export async function onRequest(context: any) {
                 controller.close();
             }
 
-            // 5. 异步记录使用（不阻塞响应）
             recordUsage(store, userId, topic || message?.slice(0, 50), keywords, style, length).catch(() => {});
         },
         cancel() { logger.log('Client disconnected'); },

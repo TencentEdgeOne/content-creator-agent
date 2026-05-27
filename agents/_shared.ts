@@ -6,7 +6,7 @@ import { initChatModel } from 'langchain';
 
 type Model = Awaited<ReturnType<typeof initChatModel>>;
 
-const MODEL_NAME = '@Pages/deepseek-v4-flash';
+const MODEL_NAME = '@makers/deepseek-v4-flash';
 
 export interface AgentEnv {
     AI_GATEWAY_API_KEY: string;

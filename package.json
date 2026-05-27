@@ -12,7 +12,6 @@
   "dependencies": {
     "@langchain/core": "^1.1.40",
     "@langchain/openai": "^1.4.4",
-    "@phukon/duckduckgo-search": "^1.2.0",
     "autoprefixer": "^10.4.21",
     "clsx": "^2.1.1",
     "deepagents": "^1.9.0",

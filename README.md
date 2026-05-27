@@ -140,13 +140,13 @@ ping          — Heartbeat keepalive
 
 ## Recommended Models
 
-Default: `@Pages/deepseek-v4-flash`. To change, update the `MODEL_NAME` constant in `agents/_shared.ts`.
+Default: `@makers/deepseek-v4-flash`. To change, update the `MODEL_NAME` constant in `agents/_shared.ts`.
 
 | Model | Best For |
 |-------|---------|
-| `@Pages/deepseek-v4-flash` | **Recommended** — Fast, good instruction following |
-| `@Pages/minimax-m2.7` | General purpose |
-| `@Pages/hy3-preview` | General purpose |
+| `@makers/deepseek-v4-flash` | **Recommended** — Fast, good instruction following |
+| `@makers/minimax-m2.7` | General purpose |
+| `@makers/hy3-preview` | General purpose |
 
 ## Tech Stack
 

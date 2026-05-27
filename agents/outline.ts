@@ -54,7 +54,7 @@ export async function onRequest(context: any) {
             `Topic: "${topic}"`,
             keywords ? `Keywords: ${keywords}` : '',
             `Style: ${style || 'informative'}`,
-            `Target length: ${length || 'medium'} (short=500w, medium=1000w, long=2000w)`,
+            `Target length: ${length || 'medium'} (short=1000字/800words, medium=2500字/2000words, long=5000字/4000words)`,
             `Language: Write in the same language as the topic`,
         ].filter(Boolean).join('\n');
 
