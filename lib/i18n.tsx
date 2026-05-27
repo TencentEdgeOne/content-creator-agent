@@ -120,7 +120,7 @@ export const translations = {
     generationFailed: '生成失败，请重试',
     blobNotConfigured: '本地开发需要配置 Blob 存储环境变量才能使用文章历史和偏好记忆功能。请在 .env 文件中设置 BLOB_PROJECT_ID 和 BLOB_TOKEN。',
     blobDocLink: '查看文档',
-    blobAutoConfig: '部署到 EdgeOne Pages 后自动注入，无需手动配置。',
+    blobAutoConfig: '部署到 EdgeOne Makers 后自动注入，无需手动配置。',
   },
   en: {
     title: 'Content Creator',
@@ -237,7 +237,7 @@ export const translations = {
     generationFailed: 'Generation failed, please retry',
     blobNotConfigured: 'Blob storage not configured for local development. Set BLOB_PROJECT_ID and BLOB_TOKEN in .env to enable article history and preferences.',
     blobDocLink: 'View docs',
-    blobAutoConfig: 'Auto-configured after deploying to EdgeOne Pages.',
+    blobAutoConfig: 'Auto-configured after deploying to EdgeOne Makers.',
   },
 };
 
