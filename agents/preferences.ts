@@ -1,25 +1,10 @@
 /**
  * User Preferences Agent (Long-term Memory)
- *
- * Implements persistent user memory using EdgeOne Pages' native memory system.
- * The memory API (context.memory) provides conversation-based storage with
- * LangGraph-compatible checkpointer and store backends.
- *
- * This agent uses a dedicated "preferences" conversation to persist user
- * writing preferences across sessions — functionally equivalent to deepagents'
- * Memory feature (StoreBackend + namespace isolation).
- *
- * Memory Pattern:
- * - Uses a fixed conversationId "user-preferences-{userId}" as the namespace
- * - Stores preferences as a system message in that conversation
- * - Reads latest preferences on load, updates after each generation
+ * Uses context.store for persistent preference storage across sessions.
  */
-import { getStore } from '@edgeone/pages-blob';
+import { createLogger } from './_shared';
 
-const logger = {
-    log(...args: unknown[]) { console.log(`[preferences][${new Date().toISOString()}]`, ...args); },
-    error(...args: unknown[]) { console.error(`[preferences][${new Date().toISOString()}]`, ...args); },
-};
+const logger = createLogger('preferences');
 
 interface UserPreferences {
     userId: string;
@@ -31,19 +16,6 @@ interface UserPreferences {
     customInstructions: string;
     totalArticles: number;
     lastActiveAt: string;
-}
-
-function getPreferenceStore() {
-    const projectId = process.env.BLOB_PROJECT_ID;
-    const token = process.env.BLOB_TOKEN;
-    if (projectId && token) {
-        return getStore({ name: 'preferences', projectId, token });
-    }
-    try {
-        return getStore('preferences');
-    } catch {
-        return null;
-    }
 }
 
 function createDefaultPreferences(userId: string): UserPreferences {
@@ -68,142 +40,92 @@ function createResponse(data: any, status = 200) {
 }
 
 export async function onRequest(context: any) {
-    const { request, memory } = context;
+    const { request, store } = context;
     const body = request?.body ?? {};
     const { action, userId = 'default' } = body;
 
-    // Use Pages memory if available (native long-term memory)
-    // Falls back to Blob storage for compatibility
-    const useNativeMemory = !!memory;
+    // context.store not available in local dev without Makers runtime
+    if (!store) {
+        const defaults = createDefaultPreferences(userId);
+        if (action === 'get') return createResponse({ preferences: defaults });
+        return createResponse({ success: true, preferences: defaults });
+    }
+
+    // One conversation per user acts as a "preferences namespace"
+    const conversationId = `preferences-${userId}`;
 
     try {
-        if (useNativeMemory) {
-            // --- Pages Native Memory Implementation ---
-            // Uses a fixed conversation as a "memory namespace" for preferences
-            const conversationId = `preferences-${userId}`;
-
-            switch (action) {
-                case 'get': {
-                    try {
-                        const messages = await memory.getMessages({
-                            conversationId,
-                            limit: 1,
-                            order: 'desc',
-                        });
-                        if (messages.length > 0 && messages[0].content) {
-                            const prefs = typeof messages[0].content === 'string'
-                                ? JSON.parse(messages[0].content)
-                                : messages[0].content;
-                            return createResponse({ preferences: prefs, source: 'memory' });
-                        }
-                    } catch {}
-                    return createResponse({ preferences: createDefaultPreferences(userId), source: 'memory' });
+        switch (action) {
+            case 'get': {
+                const messages = await store.getMessages({ conversationId, limit: 1, order: 'desc' });
+                if (messages.length > 0 && messages[0].content) {
+                    const prefs = typeof messages[0].content === 'string'
+                        ? JSON.parse(messages[0].content)
+                        : messages[0].content;
+                    return createResponse({ preferences: prefs });
                 }
+                return createResponse({ preferences: createDefaultPreferences(userId) });
+            }
 
-                case 'save': {
-                    const { preferences } = body;
-                    if (!preferences) return createResponse({ error: 'Missing preferences' }, 400);
+            case 'save': {
+                const { preferences } = body;
+                if (!preferences) return createResponse({ error: 'Missing preferences' }, 400);
 
-                    const merged = { ...createDefaultPreferences(userId), ...preferences, userId, lastActiveAt: new Date().toISOString() };
-                    // Clear old and write new (single-message pattern)
-                    try { await memory.clearMessages({ conversationId }); } catch {}
-                    await memory.appendMessage({
-                        conversationId,
-                        role: 'system',
-                        content: JSON.stringify(merged),
-                        metadata: { type: 'preferences', userId },
-                    });
-                    logger.log('Saved preferences via memory API for:', userId);
-                    return createResponse({ success: true, source: 'memory' });
-                }
+                const merged = {
+                    ...createDefaultPreferences(userId),
+                    ...preferences,
+                    userId,
+                    lastActiveAt: new Date().toISOString(),
+                };
+                try { await store.clearMessages({ conversationId }); } catch {}
+                await store.appendMessage({
+                    conversationId,
+                    role: 'system',
+                    content: JSON.stringify(merged),
+                    metadata: { type: 'preferences', userId },
+                });
+                logger.log('Preferences saved for:', userId);
+                return createResponse({ success: true });
+            }
 
-                case 'recordUsage': {
-                    const { topic, keywords, style, length } = body;
-                    // Get existing
-                    let prefs = createDefaultPreferences(userId);
-                    try {
-                        const messages = await memory.getMessages({ conversationId, limit: 1, order: 'desc' });
-                        if (messages.length > 0 && messages[0].content) {
-                            prefs = typeof messages[0].content === 'string'
-                                ? JSON.parse(messages[0].content)
-                                : messages[0].content;
-                        }
-                    } catch {}
+            case 'recordUsage': {
+                const { topic, keywords, style, length } = body;
+                let prefs = createDefaultPreferences(userId);
 
-                    // Update
-                    if (topic) prefs.recentTopics = [topic, ...prefs.recentTopics.filter((t: string) => t !== topic)].slice(0, 10);
-                    if (keywords) {
-                        const newKws = keywords.split(/[,，]/).map((k: string) => k.trim()).filter(Boolean);
-                        prefs.recentKeywords = [...new Set([...newKws, ...prefs.recentKeywords])].slice(0, 20);
+                // Load existing preferences
+                try {
+                    const messages = await store.getMessages({ conversationId, limit: 1, order: 'desc' });
+                    if (messages.length > 0 && messages[0].content) {
+                        prefs = typeof messages[0].content === 'string'
+                            ? JSON.parse(messages[0].content)
+                            : messages[0].content;
                     }
-                    if (style) prefs.defaultStyle = style;
-                    if (length) prefs.defaultLength = length;
-                    prefs.totalArticles = (prefs.totalArticles || 0) + 1;
-                    prefs.lastActiveAt = new Date().toISOString();
+                } catch {}
 
-                    try { await memory.clearMessages({ conversationId }); } catch {}
-                    await memory.appendMessage({
-                        conversationId,
-                        role: 'system',
-                        content: JSON.stringify(prefs),
-                        metadata: { type: 'preferences', userId },
-                    });
-                    logger.log('Recorded usage via memory API:', userId, `(total: ${prefs.totalArticles})`);
-                    return createResponse({ success: true, preferences: prefs, source: 'memory' });
+                // Update
+                if (topic) prefs.recentTopics = [topic, ...prefs.recentTopics.filter((t: string) => t !== topic)].slice(0, 10);
+                if (keywords) {
+                    const newKws = keywords.split(/[,，]/).map((k: string) => k.trim()).filter(Boolean);
+                    prefs.recentKeywords = [...new Set([...newKws, ...prefs.recentKeywords])].slice(0, 20);
                 }
+                if (style) prefs.defaultStyle = style;
+                if (length) prefs.defaultLength = length;
+                prefs.totalArticles = (prefs.totalArticles || 0) + 1;
+                prefs.lastActiveAt = new Date().toISOString();
 
-                default:
-                    return createResponse({ error: 'Unknown action. Use: get, save, recordUsage' }, 400);
+                try { await store.clearMessages({ conversationId }); } catch {}
+                await store.appendMessage({
+                    conversationId,
+                    role: 'system',
+                    content: JSON.stringify(prefs),
+                    metadata: { type: 'preferences', userId },
+                });
+                logger.log('Usage recorded:', userId, `(total: ${prefs.totalArticles})`);
+                return createResponse({ success: true, preferences: prefs });
             }
-        } else {
-            // --- Blob Storage Fallback ---
-            const store = getPreferenceStore();
-            if (!store) {
-                return createResponse({
-                    error: 'BLOB_NOT_CONFIGURED',
-                    message: 'Blob storage is not configured. Please set BLOB_PROJECT_ID and BLOB_TOKEN environment variables, or deploy to EdgeOne Pages.',
-                    preferences: createDefaultPreferences(userId),
-                }, 200);
-            }
-            const key = `pref-${userId}`;
 
-            switch (action) {
-                case 'get': {
-                    const data = await store.get(key, { type: 'json' }) as UserPreferences | null;
-                    return createResponse({ preferences: data || createDefaultPreferences(userId), source: 'blob' });
-                }
-
-                case 'save': {
-                    const { preferences } = body;
-                    if (!preferences) return createResponse({ error: 'Missing preferences' }, 400);
-                    const existing = await store.get(key, { type: 'json' }) as UserPreferences | null;
-                    const merged = { ...createDefaultPreferences(userId), ...existing, ...preferences, userId, lastActiveAt: new Date().toISOString() };
-                    await store.setJSON(key, merged);
-                    return createResponse({ success: true, source: 'blob' });
-                }
-
-                case 'recordUsage': {
-                    const { topic, keywords, style, length } = body;
-                    const existing = await store.get(key, { type: 'json' }) as UserPreferences | null;
-                    const prefs = existing || createDefaultPreferences(userId);
-
-                    if (topic) prefs.recentTopics = [topic, ...prefs.recentTopics.filter(t => t !== topic)].slice(0, 10);
-                    if (keywords) {
-                        const newKws = keywords.split(/[,，]/).map((k: string) => k.trim()).filter(Boolean);
-                        prefs.recentKeywords = [...new Set([...newKws, ...prefs.recentKeywords])].slice(0, 20);
-                    }
-                    if (style) prefs.defaultStyle = style;
-                    if (length) prefs.defaultLength = length;
-                    prefs.totalArticles += 1;
-                    prefs.lastActiveAt = new Date().toISOString();
-
-                    await store.setJSON(key, prefs);
-                    return createResponse({ success: true, preferences: prefs, source: 'blob' });
-                }
-
-                default:
-                    return createResponse({ error: 'Unknown action. Use: get, save, recordUsage' }, 400);
-            }
+            default:
+                return createResponse({ error: 'Unknown action. Use: get, save, recordUsage' }, 400);
         }
     } catch (e) {
         logger.error((e as Error).message);

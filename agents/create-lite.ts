@@ -36,12 +36,12 @@ function createSearchTool(contextTools: any) {
     const webSearchTool = contextTools?.get?.('web_search');
 
     return tool(
-        async ({ query, maxResults = 5 }: { query: string; maxResults?: number }) => {
+        async ({ query }: { query: string }) => {
             logger.log(`search_web: "${query}"`);
 
             if (webSearchTool) {
                 try {
-                    const result = await webSearchTool.execute({ query, maxResults });
+                    const result = await webSearchTool.execute({ query, maxResults: 5 });
                     const text = typeof result === 'string' ? result : JSON.stringify(result);
                     return text.slice(0, 2000);
                 } catch (e) {
@@ -57,7 +57,6 @@ function createSearchTool(contextTools: any) {
             description: 'Search the web. Call ONCE before writing.',
             schema: z.object({
                 query: z.string().describe('Search query'),
-                maxResults: z.number().optional().default(5),
             }),
         }
     );

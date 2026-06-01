@@ -28,12 +28,6 @@ export interface SeoData {
   suggestions: { text: string; severity: "info" | "warning" | "error" }[];
 }
 
-export interface ResearchSource {
-  title: string;
-  url: string;
-  snippet: string;
-}
-
 export interface ArticleVersion {
   content: string;
   createdAt: string;
@@ -52,7 +46,7 @@ export default function Home() {
     refine: "pending",
   });
   const [seoData, setSeoData] = useState<SeoData | null>(null);
-  const [sources, setSources] = useState<ResearchSource[]>([]);
+  const [sources, setSources] = useState<string>("");
   const [keywords, setKeywords] = useState("");
   const [style, setStyle] = useState("");
   const [abortController, setAbortController] = useState<AbortController | null>(null);
@@ -97,9 +91,6 @@ export default function Home() {
         if (data?.preferences) {
           setPreferences(data.preferences);
         }
-        if (data?.error === 'BLOB_NOT_CONFIGURED') {
-          setStorageWarning(t.blobNotConfigured);
-        }
       })
       .catch(() => {});
   }, []);
@@ -127,7 +118,7 @@ export default function Home() {
       setPendingParams(params);
       setContent("");
       setSeoData(null);
-      setSources([]);
+      setSources("");
       setKeywords(params.keywords);
       setStyle(params.style);
       setTokenUsage({ input: 0, output: 0 });
@@ -301,12 +292,9 @@ export default function Home() {
 
                 case "tool_result":
                   if (event.name === "search_web" || event.name === "search_topic") {
-                    try {
-                      const results = JSON.parse(event.content);
-                      if (Array.isArray(results)) {
-                        setSources(results);
-                      }
-                    } catch {}
+                    if (event.content) {
+                      setSources(event.content);
+                    }
                   }
                   break;
 
@@ -573,7 +561,7 @@ export default function Home() {
           <aside className="w-full lg:w-[280px] flex-shrink-0 space-y-4">
             <TopicForm onGenerate={handleGenerate} onStop={handleStop} isGenerating={isGenerating || isGeneratingOutline} preferences={preferences} />
             <ProcessSteps steps={steps} stepTokens={stepTokens} />
-            {sources.length > 0 && <ResearchResults sources={sources} />}
+            {sources && <ResearchResults sources={sources} />}
           </aside>
 
           {/* Main content */}
