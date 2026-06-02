@@ -4,6 +4,9 @@ AI-powered content creation assistant with real web search, outline generation, 
 
 Built on [EdgeOne Makers](https://edgeone.ai/makers) + [DeepAgents](https://github.com/langchain-ai/deepagents) + [LangChain](https://js.langchain.com/).
 
+## Deploy
+[![Deploy to EdgeOne Makers](https://cdnstatic.tencentcs.com/edgeone/pages/deploy.svg)](https://console.cloud.tencent.com/edgeone/makers/new?template=content-creator-agent&from=within&fromAgent=1&agentLang=typescript)
+
 ## Features
 
 ### Core Writing Pipeline
