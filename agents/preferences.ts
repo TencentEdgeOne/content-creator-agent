@@ -127,8 +127,23 @@ export async function onRequest(context: any) {
             default:
                 return createResponse({ error: 'Unknown action. Use: get, save, recordUsage' }, 400);
         }
-    } catch (e) {
-        logger.error((e as Error).message);
-        return createResponse({ error: (e as Error).message }, 500);
+    } catch (e: any) {
+        const msg = e?.message || String(e);
+        // wrapStorage in the Makers runtime re-wraps blob credential errors as
+        // "Memory storage operation failed." so we catch both the original code
+        // and the wrapped message.
+        const isStorageError =
+            e?.code === 'CREDENTIAL_ERROR' ||
+            msg.includes('credential') ||
+            msg.includes('Invalid project') ||
+            msg.includes('Memory storage operation failed');
+        if (isStorageError) {
+            logger.error('Storage not configured:', msg);
+            const defaults = createDefaultPreferences(userId);
+            if (action === 'get') return createResponse({ error: 'BLOB_NOT_CONFIGURED', preferences: defaults });
+            return createResponse({ error: 'BLOB_NOT_CONFIGURED', success: false });
+        }
+        logger.error(msg);
+        return createResponse({ error: msg }, 500);
     }
 }

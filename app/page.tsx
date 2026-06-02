@@ -5,7 +5,6 @@ import { TopicForm } from "./components/topic-form";
 import { ArticleEditor } from "./components/article-editor";
 import { ArticleStats } from "./components/article-stats";
 import { ProcessSteps } from "./components/process-steps";
-import { ResearchResults } from "./components/research-results";
 import { RefineBar } from "./components/refine-bar";
 import { ArticleHistory } from "./components/article-history";
 import { ExportPanel } from "./components/export-panel";
@@ -90,6 +89,9 @@ export default function Home() {
       .then(data => {
         if (data?.preferences) {
           setPreferences(data.preferences);
+        }
+        if (data?.error === 'BLOB_NOT_CONFIGURED') {
+          setStorageWarning(t.blobNotConfigured);
         }
       })
       .catch(() => {});
@@ -561,7 +563,6 @@ export default function Home() {
           <aside className="w-full lg:w-[280px] flex-shrink-0 space-y-4">
             <TopicForm onGenerate={handleGenerate} onStop={handleStop} isGenerating={isGenerating || isGeneratingOutline} preferences={preferences} />
             <ProcessSteps steps={steps} stepTokens={stepTokens} />
-            {sources && <ResearchResults sources={sources} />}
           </aside>
 
           {/* Main content */}
