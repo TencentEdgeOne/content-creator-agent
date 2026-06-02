@@ -224,7 +224,7 @@ export function RefineBar({ content, onRefineComplete, onRefineStart, onRefineEn
                       ? "bg-brand-100 text-brand-700 dark:bg-brand-900/40 dark:text-brand-300 ring-1 ring-brand-300"
                       : "bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700"
                   )}
-                  title={section.title + (h3Children.length > 0 ? `\n  └ ${h3Children.map(c => c.title).join('\n  └ ')}` : '')}
+                  title={section.title + (h3Children.length > 0 ? `\n  ${h3Children.map(c => c.title).join('\n  ')}` : '')}
                 >
                   {section.title}
                 </button>
@@ -253,7 +253,7 @@ export function RefineBar({ content, onRefineComplete, onRefineStart, onRefineEn
                 )}
                 title={section.title}
               >
-                └ {section.title}
+                  {section.title}
               </button>
             ))}
           </div>

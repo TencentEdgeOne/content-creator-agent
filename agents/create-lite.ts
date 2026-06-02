@@ -20,7 +20,12 @@ WORKFLOW:
 
 RULES:
 - Call search_web exactly ONCE, then write the full article as text
-- Output in markdown format with ## or ### headings, paragraphs, and lists
+- Output in markdown format. Use this heading hierarchy:
+  - # (H1) for the article title (first line only)
+  - ## (H2) for main sections (e.g. Introduction, Conclusion, major topic sections)
+  - ### (H3) for subsections within a main section
+  - #### (H4) for detailed points within a subsection (use sparingly)
+  Never use only H2 or only H3 throughout — vary the depth to match content structure.
 - Write in the same language as the user's topic
 - For Chinese: count by 汉字. For English: count by words.
 - STRICTLY follow the target length:
