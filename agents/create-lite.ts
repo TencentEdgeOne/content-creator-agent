@@ -79,7 +79,7 @@ async function* eventStream(modelInstance: Model, userMessage: string, contextTo
         ];
         let searchDone = false;
 
-        for (let i = 0; i < 3; i++) {
+        for (let i = 0; i < 4; i++) {
             if (signal?.aborted) break;
 
             const activeModel = searchDone ? modelInstance : modelWithTools;
@@ -113,23 +113,56 @@ async function* eventStream(modelInstance: Model, userMessage: string, contextTo
 
                 if (msg?.text) {
                     fullContent += msg.text;
-                    // Filter out model internal markup (DSML)
-                    if (msg.text.includes('DSML') || msg.text.includes('tool_calls>') || msg.text.includes('invoke>') || msg.text.includes('parameter>')) {
-                        continue;
+                    // Phase 1 (pre-search): never stream — content may be DSML/thinking text.
+                    // Phase 2 (post-search): stream the actual article content.
+                    if (searchDone) {
+                        const cleaned = msg.text.replace(/\n{3,}/g, '\n\n');
+                        if (cleaned) yield `data: ${JSON.stringify({ type: 'ai_response', content: cleaned })}\n\n`;
                     }
-                    const cleaned = msg.text.replace(/\n{3,}/g, '\n\n');
-                    if (cleaned) yield `data: ${JSON.stringify({ type: 'ai_response', content: cleaned })}\n\n`;
                 }
             }
 
             if (fullContent && toolCalls.length === 0) {
-                // If model output DSML markup instead of real content, retry without tools
-                const hasDSML = fullContent.includes('DSML') || fullContent.includes('<tool_calls>') || fullContent.includes('<invoke');
-                if (hasDSML && !searchDone) {
-                    searchDone = true;
-                    messages.push(new AIMessage({ content: '' }));
-                    logger.log('Model output DSML as text, retrying without tools');
-                    continue;
+                if (!searchDone) {
+                    // Phase 1 produced text but no tool calls — could be DSML or the model
+                    // skipped searching. Treat the full content as the article if it looks
+                    // substantive; otherwise discard and retry without tools.
+                    const hasDSML = fullContent.includes('<tool_calls>') || fullContent.includes('<invoke') || fullContent.includes('<parameter');
+                    if (hasDSML) {
+                        // DSML detected: extract queries from XML and run the searches manually,
+                        // then retry writing without tools (searchDone = true).
+                        logger.log('DSML detected in Phase 1 — executing embedded searches');
+                        searchDone = true;
+
+                        // Extract <parameter name="query"> values from the DSML
+                        const queryMatches = fullContent.matchAll(/<parameter[^>]*name="query"[^>]*>([^<]+)<\/parameter>/g);
+                        const queries = [...queryMatches].map(m => m[1].trim()).filter(Boolean);
+                        // Deduplicate, take first 3 to keep cost low
+                        const uniqueQueries = [...new Set(queries)].slice(0, 3);
+                        logger.log(`Found ${uniqueQueries.length} queries in DSML`);
+
+                        const searchResults: string[] = [];
+                        for (const q of uniqueQueries) {
+                            yield `data: ${JSON.stringify({ type: 'tool_call', name: 'search_web' })}\n\n`;
+                            const result = await (searchTool as any).invoke({ query: q });
+                            const resultStr = typeof result === 'string' ? result : JSON.stringify(result);
+                            yield `data: ${JSON.stringify({ type: 'tool_result', name: 'search_web', content: resultStr.slice(0, 500) })}\n\n`;
+                            searchResults.push(`Query: ${q}\n${resultStr}`);
+                        }
+
+                        // Rebuild messages with search results for the writing pass
+                        if (searchResults.length > 0) {
+                            const combinedResults = searchResults.join('\n\n---\n\n').slice(0, 4000);
+                            // Replace the last HumanMessage with an augmented version
+                            const lastHuman = messages[messages.length - 1];
+                            const augmented = `${(lastHuman as any).content}\n\nSearch results:\n${combinedResults}`;
+                            messages[messages.length - 1] = new HumanMessage(augmented);
+                        }
+                        continue;
+                    }
+                    // Model wrote the article without searching — stream it now
+                    const cleaned = fullContent.replace(/\n{3,}/g, '\n\n');
+                    if (cleaned) yield `data: ${JSON.stringify({ type: 'ai_response', content: cleaned })}\n\n`;
                 }
                 break;
             }
