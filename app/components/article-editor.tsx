@@ -6,6 +6,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
+import { createPortal } from "react-dom";
 
 interface ArticleVersion {
   content: string;
@@ -42,6 +43,7 @@ export function ArticleEditor({
   const [copied, setCopied] = useState(false);
   const [showVersionDropdown, setShowVersionDropdown] = useState(false);
   const [fadeIn, setFadeIn] = useState(false);
+  const [isFocused, setIsFocused] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
 
   // Expose scroll methods via ref
@@ -60,6 +62,15 @@ export function ArticleEditor({
       };
     }
   }, [scrollRef]);
+
+  // ESC to exit focus mode
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isFocused) setIsFocused(false);
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [isFocused]);
 
   // Fade-in effect when loading article
   useEffect(() => {
@@ -122,7 +133,8 @@ export function ArticleEditor({
     : null;
 
   return (
-    <Card className="relative min-h-[600px]">
+    <>
+    <Card className="relative min-h-[300px]">
       {/* Loading overlay for article loading */}
       {isLoadingArticle && (
         <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/60 dark:bg-gray-900/60 backdrop-blur-sm rounded-xl">
@@ -224,13 +236,47 @@ export function ArticleEditor({
             </div>
           )}
         </div>
+
+        {/* Right side: copy + expand */}
+        <div className="flex items-center gap-2">
+          {content && !isGenerating && (
+            <button
+              onClick={handleCopy}
+              className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-gray-500 hover:text-gray-700 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-gray-700/50 transition-colors"
+              title={copied ? t.copied : t.copy}
+            >
+              {copied ? (
+                <svg className="h-3.5 w-3.5 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+              ) : (
+                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                </svg>
+              )}
+              {copied ? t.copied : t.copy}
+            </button>
+          )}
+          {content && (
+            <button
+              onClick={() => setIsFocused(true)}
+              className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-gray-500 hover:text-gray-700 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-gray-700/50 transition-colors"
+              title={t.focusMode}
+            >
+              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+              </svg>
+              {t.focusMode}
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Content area */}
       <div
         ref={contentRef}
         data-article-content
-        className="max-h-[calc(100vh-200px)] overflow-y-auto px-8 py-6"
+        className="max-h-[60vh] overflow-y-auto px-8 py-6"
       >
         <div className={cn(
           "prose-editor transition-opacity duration-300",
@@ -243,5 +289,83 @@ export function ArticleEditor({
         )}
       </div>
     </Card>
+
+    {/* Focus mode overlay (portal) */}
+    {isFocused && typeof document !== 'undefined' && createPortal(
+      <div className="fixed inset-0 z-50 flex flex-col bg-white dark:bg-gray-950 animate-in fade-in duration-200">
+        {/* Focus mode toolbar */}
+        <div className="flex items-center justify-between border-b border-gray-100 dark:border-gray-800 px-6 py-3 flex-shrink-0">
+          <div className="flex items-center gap-3">
+            {isGenerating && (
+              <span className="flex items-center gap-2 text-sm text-brand-600">
+                <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-brand-500" />
+                Writing...
+              </span>
+            )}
+            {isRefining && (
+              <span className="flex items-center gap-2 text-sm text-orange-600">
+                <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-orange-500" />
+                {t.modifying}
+              </span>
+            )}
+            {!isGenerating && !isRefining && content && (
+              <span className="text-sm text-gray-400">
+                {(() => {
+                  const chinese = (content.match(/[\u4e00-\u9fff]/g) || []).length;
+                  const english = content.replace(/[\u4e00-\u9fff]/g, '').split(/\s+/).filter(Boolean).length;
+                  return chinese + english;
+                })()} {t.wordCount}
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            {content && !isGenerating && (
+              <button
+                onClick={handleCopy}
+                className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-gray-500 hover:text-gray-700 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-gray-700/50 transition-colors"
+              >
+                {copied ? (
+                  <svg className="h-3.5 w-3.5 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                  </svg>
+                ) : (
+                  <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                  </svg>
+                )}
+                {copied ? t.copied : t.copy}
+              </button>
+            )}
+            <button
+              onClick={() => setIsFocused(false)}
+              className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium text-gray-600 hover:text-gray-900 hover:bg-gray-100 dark:text-gray-300 dark:hover:text-gray-100 dark:hover:bg-gray-800 transition-colors border border-gray-200 dark:border-gray-700"
+            >
+              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 9V4.5M9 9H4.5M9 9L3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5l5.25 5.25" />
+              </svg>
+              {t.exitFocusMode}
+              <kbd className="ml-1 text-[10px] text-gray-400 dark:text-gray-500">Esc</kbd>
+            </button>
+          </div>
+        </div>
+
+        {/* Focus mode content */}
+        <div
+          data-article-content
+          className="flex-1 overflow-y-auto w-full"
+        >
+          <div className="max-w-4xl mx-auto px-8 py-8">
+            <div className="prose-editor">
+              <ReactMarkdown>{content}</ReactMarkdown>
+            </div>
+            {isGenerating && (
+              <div className="mt-4 animate-shimmer h-4 rounded" />
+            )}
+          </div>
+        </div>
+      </div>,
+      document.body
+    )}
+  </>
   );
 }

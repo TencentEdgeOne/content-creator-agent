@@ -71,7 +71,7 @@ export default function Home() {
 
   // Preferences & notifications
   const [preferences, setPreferences] = useState<any>(null);
-  const [storageWarning, setStorageWarning] = useState<string | null>(null);
+  const [storageWarning, setStorageWarning] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<{ text: string; type: 'error' | 'success' } | null>(null);
 
@@ -91,7 +91,7 @@ export default function Home() {
           setPreferences(data.preferences);
         }
         if (data?.error === 'BLOB_NOT_CONFIGURED') {
-          setStorageWarning(t.blobNotConfigured);
+          setStorageWarning(true);
         }
       })
       .catch(() => {});
@@ -536,13 +536,13 @@ export default function Home() {
           <div className="flex items-start gap-2 px-4 py-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
             <span className="text-amber-500 mt-0.5">⚠️</span>
             <div className="flex-1">
-              <p className="text-xs text-amber-700 dark:text-amber-400">{storageWarning}</p>
+              <p className="text-xs text-amber-700 dark:text-amber-400">{t.blobNotConfigured}</p>
               <p className="text-[11px] text-amber-600/80 dark:text-amber-500/80 mt-0.5">
                 <a href="https://cloud.tencent.com/document/product/1552/131425" target="_blank" rel="noopener noreferrer" className="underline hover:text-amber-800 dark:hover:text-amber-300">{t.blobDocLink}</a>
                 {" "}| {t.blobAutoConfig}
               </p>
             </div>
-            <button onClick={() => setStorageWarning(null)} className="text-amber-400 hover:text-amber-600 text-sm leading-none">×</button>
+            <button onClick={() => setStorageWarning(false)} className="text-amber-400 hover:text-amber-600 text-sm leading-none">×</button>
           </div>
         </div>
       )}

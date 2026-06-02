@@ -78,6 +78,20 @@ function replaceSectionInContent(fullContent: string, sectionIndex: number, newS
   return [...before, newSectionContent, ...after].join('\n');
 }
 
+function scrollToHeading(title: string) {
+  const container = document.querySelector('[data-article-content]') as HTMLElement | null;
+  if (!container) return;
+  const headings = container.querySelectorAll('h1, h2, h3');
+  for (const el of headings) {
+    if (el.textContent?.trim() === title) {
+      // offsetTop relative to the scroll container
+      const top = (el as HTMLElement).offsetTop - 48;
+      container.scrollTo({ top, behavior: 'smooth' });
+      break;
+    }
+  }
+}
+
 export function RefineBar({ content, onRefineComplete, onRefineStart, onRefineEnd, onTokenUsage, isRefining = false }: RefineBarProps) {
   const { t } = useI18n();
   const [instruction, setInstruction] = useState('');
@@ -208,14 +222,7 @@ export function RefineBar({ content, onRefineComplete, onRefineStart, onRefineEn
                   key={section.index}
                   onClick={() => {
                     setSelectedSection(section.index);
-                    // Scroll to section in editor
-                    const headings = document.querySelectorAll('[data-article-content] h1, [data-article-content] h2, [data-article-content] h3');
-                    for (const el of headings) {
-                      if (el.textContent?.trim() === section.title) {
-                        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                        break;
-                      }
-                    }
+                    scrollToHeading(section.title);
                   }}
                   className={cn(
                     "rounded-full px-3 py-1 text-xs font-medium transition-colors",
