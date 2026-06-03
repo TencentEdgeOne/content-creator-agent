@@ -6,7 +6,7 @@ AI-powered content creation assistant with real web search, outline generation, 
 
 **Framework:** None (raw Node.js) · **Category:** Content · **Language:** TypeScript
 
-[![Deploy to EdgeOne Makers](https://cdnstatic.tencentcs.com/edgeone/pages/deploy.svg)](https://edgeone.ai/makers/new?template=content-creator-edgeone&from=within&fromAgent=1&agentLang=typescript)
+[![Deploy to EdgeOne Makers](https://cdnstatic.tencentcs.com/edgeone/pages/deploy.svg)](https://console.tencentcloud.com/edgeone/makers/new?template=content-creator-edgeone&from=within&fromAgent=1&agentLang=typescript)
 
 <!-- TODO: confirm -->
 ![preview](./assets/preview.png)
