@@ -30,9 +30,10 @@ interface UserMemory {
 }
 
 /**
- * 读取最新一条偏好记录。
- * 用 `appendMessage` 多 record 累积历史，"读最新" 即可。
- * 不再用 `clearMessages + appendMessage` 模拟 KV（与 SOP H-163 冲突）。
+ * Read the latest preference record.
+ * History is accumulated via `appendMessage` (multiple records); the latest
+ * record is the current value. We no longer simulate a KV with
+ * `clearMessages + appendMessage` (SOP H-163 forbids it).
  */
 async function loadUserMemory(store: any, userId: string): Promise<UserMemory | null> {
     if (!store) return null;
@@ -51,8 +52,9 @@ async function loadUserMemory(store: any, userId: string): Promise<UserMemory | 
 }
 
 /**
- * 记录偏好：直接 appendMessage 一条新 record（保留历史）。
- * 不再 clearMessages——历史演化是 audit 友好的。
+ * Persist preferences by appending a new record (keeps full history).
+ * We no longer call clearMessages — appending preserves an audit-friendly
+ * evolution trail.
  */
 async function recordUsage(store: any, userId: string, topic: string, keywords?: string, style?: string, length?: string) {
     if (!store) return;

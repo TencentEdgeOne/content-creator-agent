@@ -8,12 +8,14 @@
  * header fallback only as a defensive last resort.
  */
 export async function onRequest(context: any) {
+  // /stop endpoint: the frontend MUST pass conversation_id via the body
+  // (never carry the header). Body wins; runtime-injected
+  // context.conversation_id acts as a fallback.
   const body = (context.request?.body ?? {}) as Record<string, unknown>;
   const conversationId =
     (body.conversation_id as string | undefined) ??
     (body.conversationId as string | undefined) ??
-    context.conversation_id ??
-    context.request?.headers?.["makers-conversation-id"];
+    context.conversation_id;
 
   if (!conversationId) {
     return new Response(
