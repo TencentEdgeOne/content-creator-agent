@@ -11,6 +11,7 @@ import { ArticleHistory } from "./components/article-history";
 import { ExportPanel } from "./components/export-panel";
 import { SeoPanel } from "./components/seo-panel";
 import { OutlineCard } from "./components/outline-card";
+import { DeployButtons } from "./components/deploy-buttons";
 import { LanguageToggle } from "@/components/ui/language-toggle";
 import { TokenUsage } from "@/components/ui/token-usage";
 import { useI18n } from "@/lib/i18n";
@@ -43,7 +44,7 @@ export default function Home() {
 }
 
 function HomeInner() {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const conversationId = useConversationId();
   const [content, setContent] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
@@ -527,6 +528,11 @@ function HomeInner() {
             </h1>
           </div>
           <div className="flex items-center gap-3">
+            <DeployButtons
+              templateSlug="content-creator-agent"
+              githubUrl="https://github.com/edgeone-pages-test/content-creator-agent"
+              lang={locale}
+            />
             <TokenUsage inputTokens={tokenUsage.input} outputTokens={tokenUsage.output} />
             <LanguageToggle />
             <div className="flex items-center gap-2 text-sm text-gray-500">
