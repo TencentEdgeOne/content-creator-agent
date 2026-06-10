@@ -59,7 +59,7 @@ edgeone makers dev
 ## 项目结构
 
 ```
-content-creator-edgeone/
+content-creator-agent/
 ├── agents/
 │   ├── _shared.ts              # 模型初始化、环境校验、日志
 │   ├── create.ts               # POST /create —— DeepAgent 模式写作（SSE）

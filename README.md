@@ -59,7 +59,7 @@ Open the local observability dashboard at http://localhost:8080/agent-metrics.
 ## Project Structure
 
 ```
-content-creator-edgeone/
+content-creator-agent/
 ├── agents/
 │   ├── _shared.ts              # Model init, env validation, logger
 │   ├── create.ts               # POST /create — DeepAgent mode writing (SSE)
