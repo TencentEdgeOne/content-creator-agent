@@ -389,13 +389,17 @@ function HomeInner() {
     abortController?.abort();
     setIsGenerating(false);
     setIsGeneratingOutline(false);
+    // The EdgeOne runtime requires makers-conversation-id header on ALL agent
+    // endpoints (including /stop). To avoid sticky-routing /stop to the busy
+    // chat instance, we generate a DIFFERENT UUID for the stop request header.
+    // The actual target conversation_id is passed via body.
     fetch("/stop", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "makers-conversation-id": conversationId,
+        "makers-conversation-id": crypto.randomUUID(),
       },
-      body: JSON.stringify({}),
+      body: JSON.stringify({ conversation_id: conversationId }),
     }).catch(() => {});
   }, [abortController, conversationId]);
 

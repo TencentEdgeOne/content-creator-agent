@@ -1,11 +1,10 @@
 /**
  * Stop active run — aborts the running generation for this conversation.
  *
- * IMPORTANT: the stop request MUST NOT carry the same `makers-conversation-id`
- * header as the chat request, otherwise EdgeOne sticky-routes /stop to the
- * busy chat instance and abortActiveRun() never reaches the runner.
- * The target conversation_id is therefore read from the request body, with
- * header fallback only as a defensive last resort.
+ * IMPORTANT: the stop request must carry a makers-conversation-id header
+ * (the runtime rejects requests without it), but it should use a DIFFERENT
+ * UUID from the chat request to avoid sticky-routing to the busy instance.
+ * The target conversation_id is read from the request body.
  */
 export async function onRequest(context: any) {
   // /stop endpoint: the frontend MUST pass conversation_id via the body

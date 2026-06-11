@@ -2,9 +2,7 @@
  * Content Creation Agent — DeepAgent Mode
  * Full agent framework with memory, structured prompts, and real web search.
  */
-import { initChatModel } from 'langchain';
-import { tool } from 'langchain';
-import { z } from 'zod';
+import { initChatModel, tool } from 'langchain';
 import { HumanMessage, AIMessage, ToolMessage as LCToolMessage } from '@langchain/core/messages';
 import { getAgentEnv, createModel, createLogger, sseEvent, createSSEResponse } from './_shared';
 
@@ -95,6 +93,10 @@ async function recordUsage(store: any, userId: string, topic: string, keywords?:
 function buildSystemPrompt(memory: UserMemory | null, articleLength: string): string {
     let prompt = `你是专业内容创作者。日期：${new Date().toISOString().slice(0, 10)}。
 
+## 工作流程
+1. 先使用 web_search 工具搜索话题，获取最新信息和数据
+2. 根据搜索结果撰写完整文章
+
 ## 文章结构（必须严格遵守）
 
 \`\`\`
@@ -138,52 +140,15 @@ function buildSystemPrompt(memory: UserMemory | null, articleLength: string): st
 }
 
 // ============================================================
-// Search Tool — uses context.tools.web_search
-// ============================================================
-function createSearchTool(contextTools: any) {
-    let callCount = 0;
-    const webSearchTool = contextTools?.get?.('web_search');
-
-    return tool(
-        async ({ query }: { query: string }) => {
-            callCount++;
-            if (callCount > 1) {
-                logger.log(`search_web blocked (call #${callCount}): "${query}"`);
-                return '已搜索过，请直接使用已有信息写文章。';
-            }
-            logger.log(`search_web: "${query}"`);
-
-            if (webSearchTool) {
-                try {
-                    const result = await webSearchTool.execute({ query, maxResults: 5 });
-                    const text = typeof result === 'string' ? result : JSON.stringify(result);
-                    return text.slice(0, 2000);
-                } catch (e) {
-                    logger.error('web_search failed:', (e as Error).message);
-                }
-            }
-
-            // Fallback
-            return `[1] ${query}的最新研究：该领域最新研究进展与专家观点综合分析。\n[2] ${query}全面指南：涵盖基础原理、最佳实践与进阶策略。\n[3] ${query}深度解读：行业专家解读，包含趋势分析与未来预测。`;
-        },
-        {
-            name: 'search_web',
-            description: '搜索网络信息（仅限调用一次）',
-            schema: z.object({ query: z.string().describe('搜索关键词') }),
-        }
-    );
-}
-
-// ============================================================
 // Core Stream
 // ============================================================
 async function* generateStream(modelInstance: Model, userMessage: string, systemPrompt: string, contextTools: any, signal?: AbortSignal): AsyncGenerator<string> {
     let totalInputTokens = 0;
     let totalOutputTokens = 0;
 
-    const searchTool = createSearchTool(contextTools);
-    const tools = [searchTool];
-    const toolMap: Record<string, typeof searchTool> = { search_web: searchTool };
+    // SOP: LangGraph/DeepAgents use toLangChainTools(tool) — returns LangChain StructuredTool[]
+    // all() returns raw {name,schema,invoke} which is not StructuredTool
+    const tools: any[] = contextTools?.toLangChainTools?.(tool) ?? [];
 
     try {
         logger.log(`Starting: "${userMessage.slice(0, 80)}"`);
@@ -264,9 +229,9 @@ async function* generateStream(modelInstance: Model, userMessage: string, system
                     const tc = aiMsg.tool_calls![j];
                     if (j === 0) {
                         yield sseEvent({ type: 'tool_call', name: tc.name });
-                        const toolFn = toolMap[tc.name];
-                        if (toolFn) {
-                            const result = await (toolFn as any).invoke(tc.args);
+                        const toolObj = tools.find((t: any) => t.name === tc.name);
+                        if (toolObj) {
+                            const result = await toolObj.invoke(tc.args);
                             const resultStr = typeof result === 'string' ? result : JSON.stringify(result);
                             yield sseEvent({ type: 'tool_result', name: tc.name, content: resultStr });
                             messages.push(new LCToolMessage({ content: resultStr, tool_call_id: tc.id || '' }));

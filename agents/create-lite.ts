@@ -2,9 +2,7 @@
  * Content Creation Agent — Lite Mode
  * Low-token alternative using direct bindTools loop.
  */
-import { initChatModel } from 'langchain';
-import { tool } from 'langchain';
-import { z } from 'zod';
+import { initChatModel, tool } from 'langchain';
 import { HumanMessage, AIMessage, ToolMessage as LCToolMessage } from '@langchain/core/messages';
 import { getAgentEnv, createModel, createLogger, sseEvent, createSSEResponse } from './_shared';
 
@@ -29,11 +27,11 @@ function stripDSML(text: string): string {
 const SYSTEM_PROMPT = `You are a professional content creator. Today's date is ${new Date().toISOString().slice(0, 10)}.
 
 WORKFLOW:
-1. Use search_web ONCE to research the topic
+1. Use web_search ONCE to research the topic
 2. Write the COMPLETE article directly in your response
 
 RULES:
-- Call search_web exactly ONCE, then write the full article as text
+- Call web_search exactly ONCE, then write the full article as text
 - Output in markdown format. Use this heading hierarchy:
   - # (H1) for the article title (first line only)
   - ## (H2) for main sections (e.g. Introduction, Conclusion, major topic sections)
@@ -48,46 +46,13 @@ RULES:
   - "long" ≈ 5000 Chinese characters OR 4000 English words, 10-15 sections
 - IMPORTANT: Do NOT write less than the target length.`;
 
-/**
- * Create search tool backed by context.tools.web_search (real search).
- */
-function createSearchTool(contextTools: any) {
-    const webSearchTool = contextTools?.get?.('web_search');
-
-    return tool(
-        async ({ query }: { query: string }) => {
-            logger.log(`search_web: "${query}"`);
-
-            if (webSearchTool) {
-                try {
-                    const result = await webSearchTool.execute({ query, maxResults: 5 });
-                    const text = typeof result === 'string' ? result : JSON.stringify(result);
-                    return text.slice(0, 2000);
-                } catch (e) {
-                    logger.error('web_search failed:', (e as Error).message);
-                }
-            }
-
-            // Fallback if context.tools unavailable
-            return `[1] ${query}的最新研究：该领域最新研究进展与专家观点综合分析。\n[2] ${query}全面指南：涵盖基础原理、最佳实践与进阶策略。\n[3] ${query}深度解读：行业专家解读，包含趋势分析与未来预测。`;
-        },
-        {
-            name: 'search_web',
-            description: 'Search the web. Call ONCE before writing.',
-            schema: z.object({
-                query: z.string().describe('Search query'),
-            }),
-        }
-    );
-}
-
 async function* eventStream(modelInstance: Model, userMessage: string, contextTools: any, signal?: AbortSignal): AsyncGenerator<string> {
     let totalInputTokens = 0;
     let totalOutputTokens = 0;
 
-    const searchTool = createSearchTool(contextTools);
-    const tools = [searchTool];
-    const toolMap: Record<string, typeof searchTool> = { search_web: searchTool };
+    // SOP: LangGraph/DeepAgents use toLangChainTools(toolFactory) to get LangChain StructuredTool[]
+    // all() returns raw {name,schema,invoke} — needs LangChain tool() wrapper
+    const tools: any[] = contextTools?.toLangChainTools?.(tool) ?? [];
 
     try {
         logger.log(`Starting: "${userMessage.slice(0, 80)}"`);
@@ -163,11 +128,14 @@ async function* eventStream(modelInstance: Model, userMessage: string, contextTo
 
                         const searchResults: string[] = [];
                         for (const q of uniqueQueries) {
-                            yield sseEvent({ type: 'tool_call', name: 'search_web' });
-                            const result = await (searchTool as any).invoke({ query: q });
-                            const resultStr = typeof result === 'string' ? result : JSON.stringify(result);
-                            yield sseEvent({ type: 'tool_result', name: 'search_web', content: resultStr.slice(0, 500) });
-                            searchResults.push(`Query: ${q}\n${resultStr}`);
+                            yield sseEvent({ type: 'tool_call', name: 'web_search' });
+                            const toolObj = tools.find((t: any) => t.name === 'web_search');
+                            if (toolObj) {
+                                const result = await toolObj.invoke({ query: q, maxResults: 5 });
+                                const resultStr = typeof result === 'string' ? result : JSON.stringify(result);
+                                yield sseEvent({ type: 'tool_result', name: 'web_search', content: resultStr.slice(0, 500) });
+                                searchResults.push(`Query: ${q}\n${resultStr}`);
+                            }
                         }
 
                         // Rebuild messages with search results for the writing pass
@@ -201,9 +169,9 @@ async function* eventStream(modelInstance: Model, userMessage: string, contextTo
                 for (const tc of aiMsg.tool_calls || []) {
                     yield sseEvent({ type: 'tool_call', name: tc.name });
 
-                    const toolFn = toolMap[tc.name];
-                    if (toolFn) {
-                        const result = await (toolFn as any).invoke(tc.args);
+                    const toolObj = tools.find((t: any) => t.name === tc.name);
+                    if (toolObj) {
+                        const result = await toolObj.invoke(tc.args);
                         const resultStr = typeof result === 'string' ? result : JSON.stringify(result);
                         yield sseEvent({ type: 'tool_result', name: tc.name, content: resultStr.slice(0, 500) });
                         messages.push(new LCToolMessage({ content: resultStr, tool_call_id: tc.id || '' }));

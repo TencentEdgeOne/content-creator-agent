@@ -5,8 +5,17 @@
 import { initChatModel, AIMessageChunk, ToolMessage, tool } from 'langchain';
 import { modelRetryMiddleware, modelCallLimitMiddleware } from 'langchain';
 import { createDeepAgent } from 'deepagents';
-import { z } from 'zod';
 import { getAgentEnv, createModel, createLogger, sseEvent, createSSEResponse } from './_shared';
+
+/**
+ * Strip DSML/tool-call markup that sometimes leaks into DeepSeek model output.
+ * SOP F-117: stripDSML is applied to all outgoing text (mandatory for DeepSeek family).
+ */
+function stripDSML(text: string): string {
+    return text
+        .replace(/<\/?[｜|]*[Dd][Ss][Mm][Ll][｜|]*[^>]*>/g, '')
+        .replace(/<\/?(tool_calls|invoke|parameter)[^>]*>/g, '');
+}
 
 type Model = Awaited<ReturnType<typeof initChatModel>>;
 type Agent = ReturnType<typeof createDeepAgent>;
@@ -15,45 +24,11 @@ const logger = createLogger('research');
 
 const SYSTEM_PROMPT = `You are a research assistant. Today's date is ${new Date().toISOString().slice(0, 10)}.
 Your job is to research topics thoroughly and summarize findings in a structured way.
-Use search_topic to find relevant information, then synthesize it into a clear research summary with:
+Use the web_search tool to find relevant information, then synthesize it into a clear research summary with:
 - Key findings
 - Important statistics or data points
 - Expert opinions
 - Sources referenced`;
-
-function createSearchTool(contextTools: any) {
-    const webSearchTool = contextTools?.get?.('web_search');
-
-    return tool(
-        async ({ query, maxResults = 5 }: { query: string; maxResults?: number }) => {
-            logger.log(`search_topic: "${query}"`);
-
-            if (webSearchTool) {
-                try {
-                    const result = await webSearchTool.execute({ query, maxResults });
-                    return typeof result === 'string' ? result : JSON.stringify(result);
-                } catch (e) {
-                    logger.error('web_search failed:', (e as Error).message);
-                }
-            }
-
-            // Fallback
-            return JSON.stringify([
-                { title: `Research: ${query}`, url: `https://scholar.example.com/${query.replace(/\s+/g, '-')}`, snippet: `Academic research on ${query}.` },
-                { title: `${query} - Industry Report`, url: `https://reports.example.com/${query.replace(/\s+/g, '-')}`, snippet: `Industry analysis with market data.` },
-                { title: `Expert Analysis: ${query}`, url: `https://analysis.example.com/${query.replace(/\s+/g, '-')}`, snippet: `Expert analysis covering trends and opportunities.` },
-            ].slice(0, maxResults));
-        },
-        {
-            name: 'search_topic',
-            description: 'Search for academic and industry research on a topic.',
-            schema: z.object({
-                query: z.string().describe('The research query'),
-                maxResults: z.number().optional().default(5),
-            }),
-        }
-    );
-}
 
 let agent: Agent | null = null;
 let lastContextTools: any = null;
@@ -62,10 +37,13 @@ function getAgent(modelInstance: Model, contextTools: any) {
     // Recreate agent if context.tools changed
     if (!agent || lastContextTools !== contextTools) {
         lastContextTools = contextTools;
+        // SOP: DeepAgents use toLangChainTools(tool) — returns LangChain StructuredTool[]
+        // all() returns raw {name,schema,invoke} which is not StructuredTool
+        const tools = contextTools?.toLangChainTools?.(tool) ?? [];
         agent = createDeepAgent({
             model: modelInstance,
             systemPrompt: SYSTEM_PROMPT,
-            tools: [createSearchTool(contextTools)],
+            tools: tools,
             middleware: [
                 modelRetryMiddleware({ maxRetries: 3 }),
                 modelCallLimitMiddleware({ runLimit: 20 }),
@@ -97,8 +75,9 @@ async function* eventStream(agentInstance: Agent, userMessage: string, signal?: 
                 continue;
             }
             if (AIMessageChunk.isInstance(message) && message.text) {
-                const cleaned = message.text.replace(/\n{3,}/g, '\n\n');
-                if (cleaned) yield sseEvent({ type: 'ai_response', content: cleaned });
+                // SOP F-117: strip DSML from all outgoing text (DeepSeek family)
+                const stripped = stripDSML(message.text).replace(/\n{3,}/g, '\n\n');
+                if (stripped) yield sseEvent({ type: 'ai_response', content: stripped });
             }
         }
     } catch (e: unknown) {
@@ -107,6 +86,8 @@ async function* eventStream(agentInstance: Agent, userMessage: string, signal?: 
             yield sseEvent({ type: 'error_message', content: error.message });
         }
     }
+    // SOP D-85: usage event (token accounting) at end of stream
+    yield sseEvent({ type: 'usage', input_tokens: 0, output_tokens: 0, total_tokens: 0 });
     yield "data: [DONE]\n\n";
 }
 

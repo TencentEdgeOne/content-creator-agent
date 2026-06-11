@@ -47,10 +47,11 @@ function createResponse(data: any, status = 200) {
 }
 
 export async function onRequestPost(context: any) {
-    const store = context.store ?? context.agent?.store ?? null;
+    // SOP H-155: cloud-functions use context.agent.store (not context.store)
+    const store = context.agent?.store ?? null;
 
-    let body: Record<string, any> = {};
-    try { body = await context.request.json(); } catch {}
+    // SOP B-37: request body comes from context.request.body (pre-parsed by runtime)
+    const body: Record<string, any> = context.request?.body ?? {};
 
     const { action, userId = 'default' } = body;
 

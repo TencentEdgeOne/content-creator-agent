@@ -1,22 +1,23 @@
-# Content Creator（内容创作助手）
+# 内容创作助手
 
-基于 DeepAgents + LangChain 构建、部署在 EdgeOne Makers 上的 AI 内容创作助手，支持实时联网搜索、大纲生成、文章写作、SEO 分析与版本管理。
+AI 驱动的内容创作助手，支持主题研究、结构化大纲生成、流式文章写作、SEO 分析与关键词建议，具备版本管理和持久记忆。基于 Deep Agents 构建，部署在 EdgeOne Makers。
 
-**Framework:** None (raw Node.js) · **Category:** Content · **Language:** TypeScript
+**Framework:** Deep Agents · **Category:** Content · **Language:** TypeScript
 
-[![部署到 EdgeOne Makers](https://cdnstatic.tencentcs.com/edgeone/pages/deploy.svg)](https://console.cloud.tencent.com/edgeone/makers/new?template=content-creator-agent&from=within&fromAgent=1&agentLang=typescript)
+[![部署到 EdgeOne Makers](https://cdnstatic.tencentcs.com/edgeone/pages/deploy.svg)](https://edgeone.ai/makers/new?template=content-creator-agent&from=within&fromAgent=1&agentLang=typescript)
 
-## Overview
+## 概述
 
-本模板将长文内容创作从选题到成稿全流程自动化。通过实时联网搜索获取最新参考资料，生成结构化大纲供人工审核，再以轻量或深度模式撰写完整文章，并提供 SEO 评分与段落级精修。所有文章版本与用户偏好均跨会话持久化。
+本模板通过多阶段 Agent 工作流，将内容创作的全流程——从主题研究到成稿润色——编排为一条完整管线。它使用基于 LangChain 的 Agent 与结构化提示词，跨会话积累用户偏好，并存储文章版本以供检索与对比。
 
-- **调研驱动写作** — 在动笔前通过真实网页搜索收集最新参考资料。
-- **人机协同大纲** — AI 生成结构化大纲，用户在写作阶段前进行审阅与修改。
-- **双模式生成** — Lite 模式（低 Token 手动工具循环）追求速度，DeepAgent 模式（完整框架 + 记忆）提供更丰富的个性化内容。
-- **SEO 与精修** — 自动分析关键词密度、可读性与标题结构；支持按段落或全文进行指令式精修。
-- **版本管理** — 文章与用户偏好持久化到 Blob 存储，支持历史回滚与跨会话续写。
+- **主题研究** — 每次请求可选执行一次联网搜索，获取写作背景材料。
+- **结构化大纲** — 在正式起草前生成带有 `##` 章节和 `###` 子章节的层级大纲。
+- **流式文章写作** — 在单次流式运行中产出完整文章，遵循字数目标与风格要求。
+- **SEO 与关键词工具** — 提供专门的 SEO 优化和关键词建议端点。
+- **持久记忆** — 通过对话级消息存储，跨文章追踪用户偏好（风格、长度、语气、近期主题）。
+- **版本管理** — 将每篇生成的文章保存为带标题、内容和元数据的版本化记录。
 
-## Environment Variables
+## 环境变量
 
 | 变量 | 必填 | 说明 |
 |----------|----------|-------------|
@@ -27,7 +28,7 @@
 
 ### 如何获取 AI_GATEWAY_API_KEY
 
-1. 打开 Makers 控制台（https://console.cloud.tencent.com/edgeone/makers）
+1. 打开 Makers 控制台（https://edgeone.ai/makers/new?s_url=https://console.tencentcloud.com/edgeone/makers）
 2. 登录并启用 Makers
 3. 进入 Makers → Models → API Key，创建 Key
 4. 将其填入 `AI_GATEWAY_API_KEY`
@@ -47,32 +48,32 @@ cp .env.example .env
 edgeone makers dev
 ```
 
-本地可观测面板地址：http://localhost:8080/agent-metrics。
+本地可观测面板地址：http://localhost:8088/agent-metrics。
 
 ## 项目结构
 
 ```
 content-creator-agent/
 ├── agents/
-│   ├── _shared.ts              # 模型初始化、环境校验、日志
-│   ├── create.ts               # POST /create —— DeepAgent 模式写作（SSE）
-│   ├── create-lite.ts          # POST /create-lite —— Lite 模式写作（SSE）
-│   ├── outline.ts              # POST /outline —— 结构化大纲生成（JSON）
-│   ├── optimize.ts             # POST /optimize —— SEO 分析（JSON）
-│   ├── refine.ts               # POST /refine —— 文章编辑（SSE）
-│   ├── research.ts             # POST /research —— 独立调研 Agent（SSE）
-│   ├── stop.ts                 # POST /stop —— 中止运行
-│   ├── suggest-keywords.ts     # POST /suggest-keywords —— 关键词建议（JSON）
-│   └── test.ts                 # POST /test —— 模型连通性测试
+│   ├── create.ts           # POST /create —— 完整文章创作（带记忆）
+│   ├── create-lite.ts      # POST /create-lite —— 轻量模式
+│   ├── outline.ts          # POST /outline —— 结构化大纲生成
+│   ├── refine.ts           # POST /refine —— 文章润色
+│   ├── research.ts         # POST /research —— 主题背景研究
+│   ├── optimize.ts         # POST /optimize —— SEO 优化
+│   ├── suggest-keywords.ts # POST /suggest-keywords —— 关键词建议
+│   ├── test.ts             # POST /test
+│   ├── stop.ts             # POST /stop —— 中止运行
+│   └── _shared.ts          # 模型初始化、环境校验、SSE 辅助函数
 ├── cloud-functions/
-│   ├── articles/               # POST /articles —— 文章增删改查 + 版本管理
-│   ├── health/                 # GET /health
-│   └── preferences/            # POST /preferences —— 用户偏好读写
-├── app/                        # Next.js App Router 前端
-├── components/                 # UI 组件（编辑器、SEO 面板、历史、导出）
+│   ├── articles/           # 文章版本持久化
+│   ├── preferences/        # 用户偏好存储
+│   ├── health/             # GET /health
+│   └── _logger.ts
+├── app/                    # Next.js App Router 前端
 ├── lib/
-│   └── i18n.tsx                # 中 / 英翻译
-└── edgeone.json                # EdgeOne 部署配置
+│   └── i18n.tsx            # 中 / 英翻译
+└── edgeone.json            # EdgeOne 部署配置
 ```
 
 以 `_` 为前缀的文件是私有模块，不会作为公共路由暴露。
@@ -80,35 +81,36 @@ content-creator-agent/
 ## 工作原理
 
 ### 运行模式
-`agents/` 下的 Agent 默认以**无状态 HTTP 处理器**运行。写作端点（`/create`、`/create-lite`、`/refine`、`/research`）通过 Server-Sent Events（SSE）实时流式输出；大纲、优化与关键词端点直接返回 JSON。
+`agents/` 下的文件以**会话模式**运行：相同 `conversation_id` 的请求会被粘性路由到同一 Agent 实例。这保证了用户记忆和对话上下文在后续消息中始终可用。
 
 ### 端到端流程
 
-1. **输入选题** —— 用户输入主题；前端调用 `/suggest-keywords` 获取 SEO 关键词建议。
-2. **生成大纲** —— 前端调用 `/outline`，传入主题、关键词、风格与目标长度。Agent 返回结构化 JSON 大纲（标题、章节、要点、字数）。
-3. **人工审阅** —— 用户在界面中编辑并确认大纲。
-4. **文章写作** —
-   - **Lite 模式**（`/create-lite`）：轻量 `bindTools` 循环，先调用一次 `search_web`，再以最小 Token 开销流式输出全文。
-   - **DeepAgent 模式**（`/create`）：完整 DeepAgent 循环，携带用户记忆（风格、长度、语气偏好）与结构化系统提示，生成更丰富内容。
-5. **SEO 分析** —— 写作完成后，前端调用 `/optimize` 评分关键词密度、可读性与标题结构。
-6. **精修** —— 用户选中某段落或全文，调用 `/refine` 并给出指令；Agent 流式输出修改后的文本。
-7. **持久化** —— 文章版本通过 `/articles` 保存到 Blob；用户偏好通过 `/preferences` 持久化。
+1. **输入收集** —— 前端 POST `/create`，携带主题、关键词、风格、长度和可选参考资料。
+2. **记忆加载** —— Agent 从对话级消息存储中加载先前保存的用户偏好（风格、语气、需避免的模式）。
+3. **研究（可选）** —— 如启用，通过平台 `web_search` 工具执行单次联网搜索，收集背景材料。
+4. **大纲生成** —— 大纲 Agent 根据请求长度产出结构化层级（`##` 章节含 `###` 子章节）。
+5. **文章起草** —— 创建 Agent 在单次流式运行中产出完整文章，遵循大纲、字数目标和已加载的用户偏好。
+6. **后处理** —— 文章可通过 `/refine` 润色、`/optimize` SEO 优化或 `/suggest-keywords` 关键词分析进行单独调用处理。
+7. **持久化** —— 最终文章通过 `cloud-functions/articles/` 保存为版本化记录；用户偏好通过 `cloud-functions/preferences/` 更新。
 
 ### 关键路由与参数
-- `/outline` —— 接收 `{ topic, keywords, style, length }`，返回 `{ outline, usage }`。
-- `/create` 与 `/create-lite` —— 接收 `{ message, topic, keywords, style, length, outline }`，流式推送 `ai_response`、`tool_call`、`tool_result` 与 `usage` 事件。
-- `/refine` —— 接收 `{ article, instruction, section }`，流式输出修改后文本。
-- `/optimize` —— 接收 `{ content, keywords }`，返回 SEO JSON。
-- `/stop` —— 取消某对话的活跃 SSE 流。
+- `/create` —— 完整文章创作。Body：`{ topic, keywords, style, length, language }`。
+- `/create-lite` —— 轻量模式，参数更少。
+- `/outline` —— 仅生成大纲。
+- `/refine` —— 润色已有文章。
+- `/optimize` —— SEO 分析与建议。
+- `/suggest-keywords` —— 关键词推荐。
+- `/stop` —— 中止活跃运行。Body：`{ conversation_id }`。
+- `conversation_id` 由前端生成，通过 `makers-conversation-id` Header 传入；运行时会自动绑定到 `context.conversation_id`。
 
-### 运行参数
-未自定义 Agent 超时，使用平台默认值。
+### 超时配置
+`edgeone.json` 中未自定义 Agent 超时，使用平台默认值。模型客户端内部超时为 300 秒。
 
 ## 相关资源
 
-- [Makers Agents 文档](https://edgeone.ai/makers)
-- [Makers 快速开始](https://edgeone.ai/makers/docs/quickstart)
-- [Makers Models](https://console.cloud.tencent.com/edgeone/makers/models)
+- [Makers Agents 文档](https://cloud.tencent.com/document/product/1552/132759)
+- [Makers 快速开始](https://cloud.tencent.com/document/product/1552/132786)
+- [Makers Models](https://cloud.tencent.com/document/product/1552/132748)
 
 ## 许可证
 
