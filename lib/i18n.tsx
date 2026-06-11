@@ -122,9 +122,7 @@ export const translations = {
     quotaExhausted: 'AI 模型调用额度已用尽，请稍后再试或升级套餐。',
     requestFailed: '请求失败',
     generationFailed: '生成失败，请重试',
-    blobNotConfigured: 'Blob 存储暂不可用，文章历史和偏好记忆功能已禁用。部署到 EdgeOne Makers 后自动启用，本地开发需在 .env 中配置 BLOB_PROJECT_ID 和 BLOB_TOKEN。',
-    blobDocLink: '查看文档',
-    blobAutoConfig: '部署到 EdgeOne Makers 后自动注入，无需手动配置。',
+    blobNotConfigured: '当前环境存储服务不可用，文章历史与偏好记忆已禁用。部署到 EdgeOne Makers 后将自动启用，无需配置任何环境变量。',
   },
   en: {
     title: 'Content Creator',
@@ -243,9 +241,7 @@ export const translations = {
     quotaExhausted: 'AI model quota exhausted. Please try again later or upgrade your plan.',
     requestFailed: 'Request failed',
     generationFailed: 'Generation failed, please retry',
-    blobNotConfigured: 'Blob storage unavailable. Article history and preferences are disabled. Auto-enabled on EdgeOne Makers; for local dev, set BLOB_PROJECT_ID and BLOB_TOKEN in .env.',
-    blobDocLink: 'View docs',
-    blobAutoConfig: 'Auto-configured after deploying to EdgeOne Makers.',
+    blobNotConfigured: 'Storage is unavailable in this environment. Article history and preferences are disabled. Deploy to EdgeOne Makers to enable them automatically — no environment variables required.',
   },
 };
 

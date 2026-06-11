@@ -235,10 +235,7 @@ export function ArticleHistory({
           </div>
         ) : blobError ? (
           <div className="py-4 px-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
-            <p className="text-xs font-medium text-amber-700 dark:text-amber-400 mb-1">{t.blobNotConfigured}</p>
-            <a href="https://cloud.tencent.com/document/product/1552/131425" target="_blank" rel="noopener noreferrer" className="text-[11px] text-amber-700 dark:text-amber-400 underline mt-1 inline-block hover:text-amber-800">
-              {t.blobDocLink} &rarr;
-            </a>
+            <p className="text-xs font-medium text-amber-700 dark:text-amber-400">{t.blobNotConfigured}</p>
           </div>
         ) : articles.length === 0 ? (
           <p className="py-4 text-center text-sm text-gray-500 dark:text-gray-400">{t.noHistory}</p>
