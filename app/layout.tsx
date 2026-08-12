@@ -3,8 +3,9 @@ import "./globals.css";
 import { I18nProvider } from "@/lib/i18n";
 
 export const metadata: Metadata = {
-  title: "Content Creator Assistant",
-  description: "AI-powered content creation with research, writing, and SEO optimization",
+  title: "Content Creator Assistant | EdgeOne Makers",
+  description: "AI-powered content creation with research, writing, and SEO optimization · Demo only · EdgeOne Makers",
+  keywords: "EdgeOne Makers, Demo only",
 };
 
 export default function RootLayout({
